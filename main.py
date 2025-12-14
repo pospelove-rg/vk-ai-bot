@@ -19,7 +19,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.131"
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI()
 
 app = FastAPI()
 
