@@ -77,9 +77,9 @@ def level_keyboard():
     return {
         "inline": True,
         "buttons": [
-            [{"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"}],
-            [{"action": {"type": "text", "label": "Средний"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Сложный"}, "color": "negative"}],
+            [{"action": {"type": "text", "label": "Р›С‘РіРєРёР№"}, "color": "positive"}],
+            [{"action": {"type": "text", "label": "РЎСЂРµРґРЅРёР№"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "РЎР»РѕР¶РЅС‹Р№"}, "color": "negative"}],
         ],
     }
 
@@ -89,47 +89,47 @@ def level_keyboard():
 async def vk_webhook(request: Request):
     data = await request.json()
 
-    # 1. ������������� �������
+    # 1. Подтверждение сервера
     if data.get("type") == "confirmation":
         return PlainTextResponse(content=VK_CONFIRMATION_CODE, media_type="text/plain")
 
-    # 2. ��������� ����� ���������
+    # 2. Обработка новых сообщений
     if data.get("type") == "message_new":
         user_id = data["object"]["from_id"]
         text = data["object"]["text"].lower()
 
-        if "�������" in text:
-            task = generate_openai_response("�������� �������� �������������� ������� ��� ���������")
+        if "задание" in text:
+            task = generate_openai_response("Придумай короткое математическое задание для школьника")
             send_vk_message(user_id, task, keyboard=get_main_keyboard())
-        elif "������" in text:
-            help_text = "� ���� ������������� ��� ���� �������. ������ '�������� �������'."
+        elif "помощь" in text:
+            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
             send_vk_message(user_id, help_text, keyboard=get_main_keyboard())
         else:
-            send_vk_message(user_id, "������ �������� �� ����������.", keyboard=get_main_keyboard())
+            send_vk_message(user_id, "Выбери действие на клавиатуре.", keyboard=get_main_keyboard())
 
         return PlainTextResponse("ok", media_type="text/plain")
 
-    # 3. ��� ���� ��������� �������
+    # 3. Для всех остальных событий
     return PlainTextResponse("ok", media_type="text/plain")
 
 
     # START
-    if text in ("начать", "start"):
+    if text in ("РЅР°С‡Р°С‚СЊ", "start"):
         cur.execute(
             "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
             "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
             (user_id, None, None),
         )
-        vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
+        vk_send(user_id, "Р’С‹Р±РµСЂРё СѓСЂРѕРІРµРЅСЊ СЃР»РѕР¶РЅРѕСЃС‚Рё:", level_keyboard())
         cur.close()
         conn.close()
         return "ok"
 
     # LEVEL SELECT
     levels = {
-        "лёгкий": "easy",
-        "средний": "medium",
-        "сложный": "hard",
+        "Р»С‘РіРєРёР№": "easy",
+        "СЃСЂРµРґРЅРёР№": "medium",
+        "СЃР»РѕР¶РЅС‹Р№": "hard",
     }
 
     if text in levels:
@@ -141,13 +141,13 @@ async def vk_webhook(request: Request):
             (level, question, user_id),
         )
 
-        vk_send(user_id, f"Вопрос:\n{question}")
+        vk_send(user_id, f"Р’РѕРїСЂРѕСЃ:\n{question}")
         cur.close()
         conn.close()
         return "ok"
 
     # DEFAULT
-    vk_send(user_id, "Напиши «Начать», чтобы начать игру.")
+    vk_send(user_id, "РќР°РїРёС€Рё В«РќР°С‡Р°С‚СЊВ», С‡С‚РѕР±С‹ РЅР°С‡Р°С‚СЊ РёРіСЂСѓ.")
     cur.close()
     conn.close()
     return "ok"
