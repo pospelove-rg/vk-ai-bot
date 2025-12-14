@@ -9,7 +9,7 @@ from psycopg2 import OperationalError, DatabaseError
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
-from openai import OpenAI, error as openai_error
+from openai import OpenAI
 
 # ================= CONFIG =================
 
@@ -21,6 +21,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.131"
 
+# Инициализация OpenAI клиента
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = FastAPI()
@@ -57,15 +58,18 @@ init_db()
 # ================= OPENAI =================
 
 def generate_question(level: str) -> str:
+    """
+    Генерация одного вопроса через OpenAI
+    """
     try:
         prompt = f"Придумай один вопрос уровня сложности '{level}' для викторины. Без ответа."
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o-mini",  # можно gpt-3.5-turbo
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )
         return response.choices[0].message.content.strip()
-    except openai_error.OpenAIError as e:
+    except Exception as e:
         print(f"[OpenAI ERROR] Failed to generate question: {e}")
         return "Ошибка генерации вопроса. Попробуйте позже."
 
