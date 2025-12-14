@@ -42,7 +42,7 @@ def init_db():
         conn, cur = get_db()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_progress (
-                user_id BIGINT PRIMARY KEY,
+                vk_user_id BIGINT PRIMARY KEY,
                 level TEXT,
                 question TEXT
             );
@@ -64,7 +64,7 @@ def generate_question(level: str) -> str:
     try:
         prompt = f"Придумай один вопрос уровня сложности '{level}' для викторины. Без ответа."
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # можно gpt-3.5-turbo
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )
@@ -142,8 +142,8 @@ async def vk_webhook(request: Request):
                 # ----------------- ЛОГИКА -----------------
                 if text in ("начать", "start"):
                     cur.execute(
-                        "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
-                        "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
+                        "INSERT INTO user_progress (vk_user_id, level, question) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (vk_user_id) DO UPDATE SET level = NULL, question = NULL",
                         (user_id, None, None),
                     )
                     vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
@@ -153,19 +153,19 @@ async def vk_webhook(request: Request):
                     level = levels[text]
                     question = generate_question(level)
                     cur.execute(
-                        "UPDATE user_progress SET level=%s, question=%s WHERE user_id=%s",
+                        "UPDATE user_progress SET level=%s, question=%s WHERE vk_user_id=%s",
                         (level, question, user_id),
                     )
                     vk_send(user_id, f"Вопрос:\n{question}", keyboard=main_keyboard())
 
                 elif text in ("получить задание",):
-                    cur.execute("SELECT level FROM user_progress WHERE user_id=%s", (user_id,))
+                    cur.execute("SELECT level FROM user_progress WHERE vk_user_id=%s", (user_id,))
                     result = cur.fetchone()
                     if result and result[0]:
                         level = result[0]
                         question = generate_question(level)
                         cur.execute(
-                            "UPDATE user_progress SET question=%s WHERE user_id=%s",
+                            "UPDATE user_progress SET question=%s WHERE vk_user_id=%s",
                             (question, user_id),
                         )
                         vk_send(user_id, f"Твое новое задание:\n{question}", keyboard=main_keyboard())
