@@ -5,160 +5,143 @@ import json
 import random
 import requests
 import psycopg2
-import openai
 
 from fastapi import FastAPI, Request
+from openai import OpenAI
 
-# ----------------- CONFIG -----------------
+# ================= CONFIG =================
 
 VK_TOKEN = os.getenv("VK_TOKEN")
 VK_CONFIRMATION_CODE = os.getenv("VK_CONFIRMATION_CODE")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-openai.api_key = OPENAI_API_KEY
-
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.131"
 
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 app = FastAPI()
 
-# ----------------- DATABASE -----------------
+# ================= DATABASE =================
 
-conn = psycopg2.connect(DATABASE_URL)
-conn.autocommit = True
-cursor = conn.cursor()
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    return conn, conn.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT NOW()
-)
-""")
+def init_db():
+    conn, cur = get_db()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_progress (
+            user_id BIGINT PRIMARY KEY,
+            level TEXT,
+            question TEXT
+        );
+    """)
+    cur.close()
+    conn.close()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS progress (
-    user_id BIGINT PRIMARY KEY,
-    level TEXT,
-    step INT DEFAULT 0,
-    updated_at TIMESTAMP DEFAULT NOW()
-)
-""")
+init_db()
 
-# ----------------- VK HELPERS -----------------
+# ================= OPENAI =================
+
+def generate_question(level: str) -> str:
+    prompt = f"Придумай один вопрос уровня сложности '{level}' для викторины. Без ответа."
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+
+    return response.choices[0].message.content.strip()
+
+# ================= VK =================
 
 def vk_send(user_id: int, text: str, keyboard: dict | None = None):
     payload = {
         "access_token": VK_TOKEN,
         "v": VK_API_VERSION,
         "user_id": user_id,
+        "message": text,
         "random_id": random.randint(1, 10**9),
-        "message": text
     }
+
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
 
     requests.post(VK_API_URL, data=payload)
 
-def main_keyboard():
+def level_keyboard():
     return {
-        "one_time": False,
-        "buttons": [[
-            {"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"},
-            {"action": {"type": "text", "label": "Средний"}, "color": "primary"},
-            {"action": {"type": "text", "label": "Сложный"}, "color": "negative"}
-        ]]
+        "inline": True,
+        "buttons": [
+            [{"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"}],
+            [{"action": {"type": "text", "label": "Средний"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "Сложный"}, "color": "negative"}],
+        ],
     }
 
-# ----------------- OPENAI -----------------
-
-def generate_task(level: str):
-    prompt = f"""
-Сгенерируй ОДНО задание уровня "{level}".
-Формат:
-Вопрос: ...
-Ответ: ...
-"""
-
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-
-    content = response.choices[0].message.content
-    question, answer = content.split("Ответ:")
-    return question.replace("Вопрос:", "").strip(), answer.strip()
-
-# ----------------- WEBHOOK -----------------
+# ================= WEBHOOK =================
 
 @app.post("/webhook")
-async def webhook(request: Request):
-    data = await request.json()
+async def webhook(req: Request):
+    data = await req.json()
 
     # VK confirmation
-    if data["type"] == "confirmation":
+    if data.get("type") == "confirmation":
         return VK_CONFIRMATION_CODE
 
-    if data["type"] != "message_new":
+    if data.get("type") != "message_new":
         return "ok"
 
-    obj = data["object"]["message"]
-    user_id = obj["from_id"]
-    text = obj.get("text", "").strip()
+    message = data["object"]["message"]
+    user_id = message["from_id"]
+    text = message.get("text", "").lower()
 
-    # save user
-    cursor.execute(
-        "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
-        (user_id,)
-    )
+    conn, cur = get_db()
 
-    if text.lower() == "начать":
-        vk_send(user_id, "Выбери уровень сложности:", main_keyboard())
+    # START
+    if text in ("начать", "start"):
+        cur.execute(
+            "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
+            "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
+            (user_id, None, None),
+        )
+        vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
+        cur.close()
+        conn.close()
         return "ok"
 
-    if text in ("Лёгкий", "Средний", "Сложный"):
-        cursor.execute("""
-        INSERT INTO progress (user_id, level, step)
-        VALUES (%s, %s, 0)
-        ON CONFLICT (user_id) DO UPDATE
-        SET level = EXCLUDED.level, step = 0
-        """, (user_id, text))
+    # LEVEL SELECT
+    levels = {
+        "лёгкий": "easy",
+        "средний": "medium",
+        "сложный": "hard",
+    }
 
-        question, answer = generate_task(text)
-        cursor.execute(
-            "UPDATE progress SET step = step + 1 WHERE user_id = %s",
-            (user_id,)
+    if text in levels:
+        level = levels[text]
+        question = generate_question(level)
+
+        cur.execute(
+            "UPDATE user_progress SET level=%s, question=%s WHERE user_id=%s",
+            (level, question, user_id),
         )
 
-        vk_send(user_id, f"Задание:\n{question}\n\nНапиши ответ.")
-        cursor.execute(
-            "UPDATE progress SET level = level || '||' || %s WHERE user_id = %s",
-            (answer, user_id)
-        )
+        vk_send(user_id, f"Вопрос:\n{question}")
+        cur.close()
+        conn.close()
         return "ok"
 
-    # answer check
-    cursor.execute(
-        "SELECT level FROM progress WHERE user_id = %s",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-
-    if row and "||" in row[0]:
-        level, correct = row[0].split("||")
-        if text.strip().lower() == correct.strip().lower():
-            vk_send(user_id, "✅ Верно! Напиши «начать» для нового задания.")
-        else:
-            vk_send(user_id, f"❌ Неверно. Правильный ответ: {correct}")
-
-        cursor.execute(
-            "DELETE FROM progress WHERE user_id = %s",
-            (user_id,)
-        )
-
+    # DEFAULT
+    vk_send(user_id, "Напиши «Начать», чтобы начать игру.")
+    cur.close()
+    conn.close()
     return "ok"
 
+
 @app.get("/")
-def health():
-    return {"status": "ok", "version": "v1.0"}
+def healthcheck():
+    return {"status": "ok"}
