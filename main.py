@@ -6,7 +6,7 @@ import random
 import requests
 import psycopg2
 
-from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from openai import OpenAI
 
 # ================= CONFIG =================
@@ -86,21 +86,31 @@ def level_keyboard():
 # ================= WEBHOOK =================
 
 @app.post("/webhook")
-async def webhook(req: Request):
-    data = await req.json()
+async def vk_webhook(request: Request):
+    data = await request.json()
 
-    # VK confirmation
+    # 1. Подтверждение сервера
     if data.get("type") == "confirmation":
-        return VK_CONFIRMATION_CODE
+        return PlainTextResponse(content=VK_CONFIRMATION_CODE, media_type="text/plain")
 
-    if data.get("type") != "message_new":
-        return "ok"
+    # 2. Обработка новых сообщений
+    if data.get("type") == "message_new":
+        user_id = data["object"]["from_id"]
+        text = data["object"]["text"].lower()
 
-    message = data["object"]["message"]
-    user_id = message["from_id"]
-    text = message.get("text", "").lower()
+        if "задание" in text:
+            task = generate_openai_response("Придумай короткое математическое задание для школьника")
+            send_vk_message(user_id, task, keyboard=get_main_keyboard())
+        elif "помощь" in text:
+            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
+            send_vk_message(user_id, help_text, keyboard=get_main_keyboard())
+        else:
+            send_vk_message(user_id, "Выбери действие на клавиатуре.", keyboard=get_main_keyboard())
 
-    conn, cur = get_db()
+        return PlainTextResponse("ok", media_type="text/plain")
+
+    # 3. Для всех остальных событий
+    return PlainTextResponse("ok", media_type="text/plain")
 
     # START
     if text in ("╨╜╨░╤З╨░╤В╤М", "start"):
