@@ -78,9 +78,9 @@ def level_keyboard():
     return {
         "inline": True,
         "buttons": [
-            [{"action": {"type": "text", "label": "Р›С‘РіРєРёР№"}, "color": "positive"}],
-            [{"action": {"type": "text", "label": "РЎСЂРµРґРЅРёР№"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "РЎР»РѕР¶РЅС‹Р№"}, "color": "negative"}],
+            [{"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"}],
+            [{"action": {"type": "text", "label": "Средний"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "Сложный"}, "color": "negative"}],
         ],
     }
 
@@ -89,15 +89,21 @@ def level_keyboard():
 @app.post("/webhook")
 async def vk_webhook(request: Request):
     data = await request.json()
+    print("VK webhook received:", data)  # Логируем данные для отладки
 
     # 1. Подтверждение сервера
     if data.get("type") == "confirmation":
-        return PlainTextResponse(content=VK_CONFIRMATION_CODE, media_type="text/plain")
+        return PlainTextResponse(VK_CONFIRMATION_CODE)
 
     # 2. Обработка новых сообщений
     if data.get("type") == "message_new":
-        user_id = data["object"]["from_id"]
-        text = data["object"]["text"].lower()
+        obj = data.get("object", {})
+        user_id = obj.get("from_id")
+        text = obj.get("text", "").lower()
+
+        if user_id is None:
+            print("Warning: from_id not found in object")
+            return PlainTextResponse("ok")  # Возвращаем "ok", чтобы VK не блокировал
 
         if "задание" in text:
             task = generate_openai_response("Придумай короткое математическое задание для школьника")
@@ -108,10 +114,10 @@ async def vk_webhook(request: Request):
         else:
             send_vk_message(user_id, "Выбери действие на клавиатуре.", keyboard=get_main_keyboard())
 
-        return PlainTextResponse("ok", media_type="text/plain")
+        return PlainTextResponse("ok")
 
     # 3. Для всех остальных событий
-    return PlainTextResponse("ok", media_type="text/plain")
+    return PlainTextResponse("ok")
 
 
     # START
