@@ -6,6 +6,7 @@ import random
 import requests
 import psycopg2
 
+from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from openai import OpenAI
 
@@ -114,22 +115,22 @@ async def vk_webhook(request: Request):
 
 
     # START
-    if text in ("РЅР°С‡Р°С‚СЊ", "start"):
+    if text in ("начать", "start"):
         cur.execute(
             "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
             "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
             (user_id, None, None),
         )
-        vk_send(user_id, "Р’С‹Р±РµСЂРё СѓСЂРѕРІРµРЅСЊ СЃР»РѕР¶РЅРѕСЃС‚Рё:", level_keyboard())
+        vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
         cur.close()
         conn.close()
         return "ok"
 
     # LEVEL SELECT
     levels = {
-        "Р»С‘РіРєРёР№": "easy",
-        "СЃСЂРµРґРЅРёР№": "medium",
-        "СЃР»РѕР¶РЅС‹Р№": "hard",
+        "лёгкий": "easy",
+        "средний": "medium",
+        "сложный": "hard",
     }
 
     if text in levels:
@@ -141,16 +142,17 @@ async def vk_webhook(request: Request):
             (level, question, user_id),
         )
 
-        vk_send(user_id, f"Р’РѕРїСЂРѕСЃ:\n{question}")
+        vk_send(user_id, f"Вопрос:\n{question}")
         cur.close()
         conn.close()
         return "ok"
 
     # DEFAULT
-    vk_send(user_id, "РќР°РїРёС€Рё В«РќР°С‡Р°С‚СЊВ», С‡С‚РѕР±С‹ РЅР°С‡Р°С‚СЊ РёРіСЂСѓ.")
+    vk_send(user_id, "Напиши «Начать», чтобы начать игру.")
     cur.close()
     conn.close()
     return "ok"
+
 
 
 @app.get("/")
