@@ -134,6 +134,7 @@ def send_vk_message(user_id, message, keyboard=None):
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+    
     if data["type"] == "confirmation":
         return Response(content=CONFIRMATION_CODE, media_type="text/plain")
 
@@ -143,16 +144,20 @@ async def webhook(request: Request):
         session = SessionLocal()
         user = session.query(User).filter(User.id==user_id).first()
         if not user:
-            user = User(id=user_id)
+            user = User(id=user_id, stage="start")
             session.add(user)
             session.commit()
 
-        # Логика стадий
-        if text == "начать":
+        # Стадия start / кнопка Начать
+        if user.stage == "start" or text == "начать":
             send_vk_message(user_id, "Привет! Выбери предмет:", keyboard=subject_keyboard)
             user.stage = "choose_subject"
             session.commit()
-        elif user.stage == "choose_subject":
+            session.close()
+            return "ok"
+
+        # Выбор предмета
+        if user.stage == "choose_subject":
             subject = text.capitalize()
             if subject in ["Математика", "Русский", "Физика"]:
                 user.subject = subject
@@ -161,6 +166,8 @@ async def webhook(request: Request):
                 session.commit()
             else:
                 send_vk_message(user_id, "Выбери предмет из кнопок.", keyboard=subject_keyboard)
+
+        # Выбор уровня
         elif user.stage == "choose_level":
             level = text.capitalize()
             if level in ["Легкий", "Средний", "Сложный"]:
@@ -169,20 +176,24 @@ async def webhook(request: Request):
                 user.current_question_index = 0
                 user.score = 0
                 session.commit()
+
                 # Генерация вопросов
                 questions_list = []
                 for _ in range(NUM_QUESTIONS):
                     q, a, exp = generate_question(user.subject, user.level)
-                    question = Question(subject=user.subject, level=user.level, question_text=q, correct_answer=a, explanation=exp)
+                    question = Question(subject=user.subject, level=user.level,
+                                        question_text=q, correct_answer=a, explanation=exp)
                     session.add(question)
                     questions_list.append(question)
                 session.commit()
                 send_vk_message(user_id, f"Первый вопрос по {user.subject} ({user.level}):\n{questions_list[0].question_text}")
             else:
                 send_vk_message(user_id, "Выбери уровень из кнопок.", keyboard=level_keyboard)
+
+        # Ответ на вопрос
         elif user.stage == "answer_question":
             question = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
-                .offset(user.current_question_index).first()
+                        .offset(user.current_question_index).first()
             if not question:
                 send_vk_message(user_id, "Вопросы закончились. Напиши 'Начать', чтобы пройти новый тест.", keyboard=start_keyboard)
             else:
@@ -206,6 +217,7 @@ async def webhook(request: Request):
                     next_q = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
                         .offset(user.current_question_index).first()
                     next_message += f"\nСледующий вопрос:\n{next_q.question_text}"
+                    send_vk_message(user_id, next_message)
                 else:
                     correct_count = session.query(Result).filter(Result.user_id==user.id, Result.subject==user.subject,
                                                                  Result.level==user.level, Result.is_correct==True).count()
@@ -215,9 +227,6 @@ async def webhook(request: Request):
                     user.score = 0
                     session.commit()
                     send_vk_message(user_id, next_message, keyboard=subject_keyboard)
-                    session.close()
-                    return "ok"
-                send_vk_message(user_id, next_message)
         else:
             send_vk_message(user_id, f"Ты написал: {text}", keyboard=start_keyboard)
 
