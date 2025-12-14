@@ -146,8 +146,15 @@ async def vk_webhook(request: Request):
             print("Warning: from_id not found in object")
             return PlainTextResponse("ok")
 
+        print(f"[DEBUG] Пользователь {user_id} написал: {text}")
+
         conn, cur = get_db()
-        cur.execute("SELECT level, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
+
+        # Проверяем, есть ли пользователь в базе
+        cur.execute(
+            "SELECT level, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s",
+            (user_id,)
+        )
         row = cur.fetchone()
         if row:
             user_level, user_subject, current_question, waiting_for_answer = row
@@ -157,13 +164,17 @@ async def vk_webhook(request: Request):
 
         # --- Начало игры ---
         if text in ("начать", "start") or not row:
+            # Создаём или сбрасываем запись пользователя
             cur.execute("""
                 INSERT INTO user_progress (vk_user_id, level, subject, question, waiting_for_answer)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (vk_user_id) DO UPDATE
                 SET level=NULL, subject=NULL, question=NULL, waiting_for_answer=FALSE
             """, (user_id, None, None, None, False))
+
+            print(f"[DEBUG] Пользователь {user_id} начал игру. Отправляем выбор предмета.")
             vk_send(user_id, "Выбери предмет:", keyboard=subject_keyboard())
+
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
@@ -185,6 +196,7 @@ async def vk_webhook(request: Request):
         if text in subjects:
             subject = subjects[text]
             cur.execute("UPDATE user_progress SET subject=%s WHERE vk_user_id=%s", (subject, user_id))
+            print(f"[DEBUG] Пользователь {user_id} выбрал предмет: {subject}")
             vk_send(user_id, "Выбери уровень сложности:", keyboard=level_keyboard())
             cur.close()
             conn.close()
@@ -204,11 +216,12 @@ async def vk_webhook(request: Request):
                 UPDATE user_progress SET level=%s, question=%s, waiting_for_answer=TRUE WHERE vk_user_id=%s
             """, (level, question, user_id))
             vk_send(user_id, f"Вопрос по {user_subject}:\n{question}")
+            print(f"[DEBUG] Пользователь {user_id} получил вопрос: {question}")
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
 
-        # --- Пользователь отвечает на вопрос ---
+        # --- Ответ на вопрос ---
         if waiting_for_answer and current_question:
             cur.execute("UPDATE user_progress SET last_answer=%s WHERE vk_user_id=%s", (text, user_id))
             feedback = check_answer(current_question, text)
