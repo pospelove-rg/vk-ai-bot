@@ -89,28 +89,29 @@ def level_keyboard():
 async def vk_webhook(request: Request):
     data = await request.json()
 
-    # 1. Подтверждение сервера
+    # 1. ╧юфЄтхЁцфхэшх ёхЁтхЁр
     if data.get("type") == "confirmation":
         return PlainTextResponse(content=VK_CONFIRMATION_CODE, media_type="text/plain")
 
-    # 2. Обработка новых сообщений
+    # 2. ╬сЁрсюЄър эют√ї ёююс∙хэшщ
     if data.get("type") == "message_new":
         user_id = data["object"]["from_id"]
         text = data["object"]["text"].lower()
 
-        if "задание" in text:
-            task = generate_openai_response("Придумай короткое математическое задание для школьника")
+        if "чрфрэшх" in text:
+            task = generate_openai_response("╧Ёшфєьрщ ъюЁюЄъюх ьрЄхьрЄшўхёъюх чрфрэшх фы  °ъюы№эшър")
             send_vk_message(user_id, task, keyboard=get_main_keyboard())
-        elif "помощь" in text:
-            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
+        elif "яюью∙№" in text:
+            help_text = "▀ ьюує ёухэхЁшЁютрЄ№ фы  Єхс  чрфрэшх. ═ряш°ш '╧юыєўшЄ№ чрфрэшх'."
             send_vk_message(user_id, help_text, keyboard=get_main_keyboard())
         else:
-            send_vk_message(user_id, "Выбери действие на клавиатуре.", keyboard=get_main_keyboard())
+            send_vk_message(user_id, "┬√схЁш фхщёЄтшх эр ъыртшрЄєЁх.", keyboard=get_main_keyboard())
 
         return PlainTextResponse("ok", media_type="text/plain")
 
-    # 3. Для всех остальных событий
+    # 3. ─ы  тёхї юёЄры№э√ї ёюс√Єшщ
     return PlainTextResponse("ok", media_type="text/plain")
+
 
     # START
     if text in ("╨╜╨░╤З╨░╤В╤М", "start"):
