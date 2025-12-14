@@ -24,7 +24,7 @@ async def webhook(request: Request):
     data = await request.json()
 
     if data["type"] == "confirmation":
-    return Response(content=CONFIRMATION_CODE, media_type="text/plain")
+        return Response(content=CONFIRMATION_CODE, media_type="text/plain")
 
     if data["type"] == "message_new":
         user_id = data["object"]["message"]["from_id"]
