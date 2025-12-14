@@ -1,121 +1,164 @@
-import os
-from fastapi import FastAPI, Request, Response, Form
-from fastapi.responses import JSONResponse
-from sqlalchemy import create_engine, Column, Integer, String, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from openai import OpenAI
-import json
+# -*- coding: utf-8 -*-
 
-# Переменные окружения
+import os
+import json
+import random
+import requests
+import psycopg2
+import openai
+
+from fastapi import FastAPI, Request
+
+# ----------------- CONFIG -----------------
+
+VK_TOKEN = os.getenv("VK_TOKEN")
 VK_CONFIRMATION_CODE = os.getenv("VK_CONFIRMATION_CODE")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Инициализация OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 
-# База данных
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
+VK_API_URL = "https://api.vk.com/method/messages.send"
+VK_API_VERSION = "5.131"
 
-class UserProgress(Base):
-    __tablename__ = "user_progress"
-    id = Column(Integer, primary_key=True, index=True)
-    vk_id = Column(String, unique=True)
-    level = Column(String)
-    current_question = Column(Integer, default=0)
-
-Base.metadata.create_all(bind=engine)
-
-# Пример вопросов (UTF-8)
-QUESTIONS = {
-    "easy": ["Сколько будет 2+2?", "Сколько будет 3+5?"],
-    "medium": ["Сколько будет 12*12?", "Сколько будет 15*3?"],
-    "hard": ["Вычислите интеграл ∫ x^2 dx", "Решите уравнение x^2 - 5x + 6 = 0"]
-}
-
-# FastAPI приложение
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"status": "OK"}
+# ----------------- DATABASE -----------------
 
-@app.post("/webhook")
-async def vk_webhook(request: Request):
-    data = await request.json()
-    
-    # Подтверждение Callback API
-    if "type" in data and data["type"] == "confirmation":
-        return Response(content=VK_CONFIRMATION_CODE, media_type="text/plain")
-    
-    if "type" in data and data["type"] == "message_new":
-        vk_id = data["object"]["from_id"]
-        text = data["object"]["text"].lower()
-        
-        session = SessionLocal()
-        user = session.query(UserProgress).filter_by(vk_id=vk_id).first()
-        if not user:
-            user = UserProgress(vk_id=vk_id)
-            session.add(user)
-            session.commit()
-        
-        # Если пользователь написал "начать"
-        if text == "начать":
-            buttons = [
-                {"action": {"type": "text", "label": "Easy"}, "color": "primary"},
-                {"action": {"type": "text", "label": "Medium"}, "color": "primary"},
-                {"action": {"type": "text", "label": "Hard"}, "color": "primary"}
-            ]
-            send_vk_message(vk_id, "Выберите уровень сложности:", buttons)
-            session.close()
-            return JSONResponse({"status": "ok"})
-        
-        # Выбор уровня сложности
-        if text in ["easy", "medium", "hard"]:
-            user.level = text
-            user.current_question = 0
-            session.commit()
-            question = QUESTIONS[text][0]
-            send_vk_message(vk_id, f"Вопрос 1: {question}")
-            session.close()
-            return JSONResponse({"status": "ok"})
-        
-        # Генерация ответа через OpenAI
-        if user.level:
-            question_index = user.current_question
-            if question_index < len(QUESTIONS[user.level]):
-                question_text = QUESTIONS[user.level][question_index]
-                response_text = generate_answer(question_text)
-                user.current_question += 1
-                session.commit()
-                send_vk_message(vk_id, f"Вопрос: {question_text}\nОтвет GPT: {response_text}")
-            else:
-                send_vk_message(vk_id, "Вопросы закончились!")
-            session.close()
-            return JSONResponse({"status": "ok"})
-        
-        session.close()
-        return JSONResponse({"status": "ok"})
+conn = psycopg2.connect(DATABASE_URL)
+conn.autocommit = True
+cursor = conn.cursor()
 
-def send_vk_message(user_id: str, message: str, keyboard: list = None):
-    import requests
-    token = os.getenv("VK_GROUP_TOKEN")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id BIGINT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT NOW()
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS progress (
+    user_id BIGINT PRIMARY KEY,
+    level TEXT,
+    step INT DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT NOW()
+)
+""")
+
+# ----------------- VK HELPERS -----------------
+
+def vk_send(user_id: int, text: str, keyboard: dict | None = None):
     payload = {
+        "access_token": VK_TOKEN,
+        "v": VK_API_VERSION,
         "user_id": user_id,
-        "message": message,
-        "random_id": 0
+        "random_id": random.randint(1, 10**9),
+        "message": text
     }
     if keyboard:
-        payload["keyboard"] = json.dumps({"one_time": True, "buttons": keyboard})
-    requests.post("https://api.vk.com/method/messages.send", data=payload, params={"access_token": token, "v": "5.131"})
+        payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
 
-def generate_answer(question: str) -> str:
-    resp = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": question}],
-        max_tokens=150
+    requests.post(VK_API_URL, data=payload)
+
+def main_keyboard():
+    return {
+        "one_time": False,
+        "buttons": [[
+            {"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"},
+            {"action": {"type": "text", "label": "Средний"}, "color": "primary"},
+            {"action": {"type": "text", "label": "Сложный"}, "color": "negative"}
+        ]]
+    }
+
+# ----------------- OPENAI -----------------
+
+def generate_task(level: str):
+    prompt = f"""
+Сгенерируй ОДНО задание уровня "{level}".
+Формат:
+Вопрос: ...
+Ответ: ...
+"""
+
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
     )
-    return resp.choices[0].message.content.strip()
+
+    content = response.choices[0].message.content
+    question, answer = content.split("Ответ:")
+    return question.replace("Вопрос:", "").strip(), answer.strip()
+
+# ----------------- WEBHOOK -----------------
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    data = await request.json()
+
+    # VK confirmation
+    if data["type"] == "confirmation":
+        return VK_CONFIRMATION_CODE
+
+    if data["type"] != "message_new":
+        return "ok"
+
+    obj = data["object"]["message"]
+    user_id = obj["from_id"]
+    text = obj.get("text", "").strip()
+
+    # save user
+    cursor.execute(
+        "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
+        (user_id,)
+    )
+
+    if text.lower() == "начать":
+        vk_send(user_id, "Выбери уровень сложности:", main_keyboard())
+        return "ok"
+
+    if text in ("Лёгкий", "Средний", "Сложный"):
+        cursor.execute("""
+        INSERT INTO progress (user_id, level, step)
+        VALUES (%s, %s, 0)
+        ON CONFLICT (user_id) DO UPDATE
+        SET level = EXCLUDED.level, step = 0
+        """, (user_id, text))
+
+        question, answer = generate_task(text)
+        cursor.execute(
+            "UPDATE progress SET step = step + 1 WHERE user_id = %s",
+            (user_id,)
+        )
+
+        vk_send(user_id, f"Задание:\n{question}\n\nНапиши ответ.")
+        cursor.execute(
+            "UPDATE progress SET level = level || '||' || %s WHERE user_id = %s",
+            (answer, user_id)
+        )
+        return "ok"
+
+    # answer check
+    cursor.execute(
+        "SELECT level FROM progress WHERE user_id = %s",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    if row and "||" in row[0]:
+        level, correct = row[0].split("||")
+        if text.strip().lower() == correct.strip().lower():
+            vk_send(user_id, "✅ Верно! Напиши «начать» для нового задания.")
+        else:
+            vk_send(user_id, f"❌ Неверно. Правильный ответ: {correct}")
+
+        cursor.execute(
+            "DELETE FROM progress WHERE user_id = %s",
+            (user_id,)
+        )
+
+    return "ok"
+
+@app.get("/")
+def health():
+    return {"status": "ok", "version": "v1.0"}
