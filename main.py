@@ -85,18 +85,18 @@ level_keyboard = {
 
 NUM_QUESTIONS = 5
 
-# Функции ИИ
+# --- Новый OpenAI API ---
 def generate_question(subject, level):
     prompt = (
-        f"Сгенерируй {level} вопрос для ОГЭ/ЕГЭ по предмету {subject}. "
+        f"Сгенерируй {level} вопрос для ОГЭ/ЕГЭ по предмету {subject}.\n"
         f"Формат: Вопрос? Ответ: <ответ>. Объяснение: <пояснение>"
     )
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        max_tokens=200
+    response = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=250,
     )
-    text = response.choices[0].text.strip()
+    text = response.choices[0].message.content.strip()
     if "Ответ:" in text:
         q_part, rest = text.split("Ответ:")
         if "Объяснение:" in rest:
@@ -108,15 +108,16 @@ def generate_question(subject, level):
 
 def check_answer(user_answer, correct_answer):
     prompt = (
-        f"Проверить ответ ученика. Вопрос: {correct_answer}, "
-        f"Ответ ученика: {user_answer}. Напиши 'Правильно' или 'Неправильно' и кратко объясни."
+        f"Проверить ответ ученика на вопрос. Вопрос: {correct_answer}, "
+        f"Ответ ученика: {user_answer}. "
+        f"Скажи 'Правильно' или 'Неправильно' и дай краткое объяснение."
     )
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        max_tokens=50
+    response = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=50,
     )
-    return response.choices[0].text.strip()
+    return response.choices[0].message.content.strip()
 
 def send_vk_message(user_id, message, keyboard=None):
     payload = {
@@ -130,105 +131,109 @@ def send_vk_message(user_id, message, keyboard=None):
         payload["keyboard"] = json.dumps(keyboard)
     requests.post("https://api.vk.com/method/messages.send", data=payload)
 
-# Webhook VK
+# --- Webhook ---
 @app.post("/webhook")
 async def webhook(request: Request):
-    data = await request.json()
-    
-    if data["type"] == "confirmation":
-        return Response(content=CONFIRMATION_CODE, media_type="text/plain")
+    try:
+        data = await request.json()
+        if data["type"] == "confirmation":
+            return Response(content=CONFIRMATION_CODE, media_type="text/plain")
 
-    if data["type"] == "message_new":
-        user_id = data["object"]["message"]["from_id"]
-        text = data["object"]["message"]["text"].strip().lower()
-        session = SessionLocal()
-        user = session.query(User).filter(User.id==user_id).first()
-        if not user:
-            user = User(id=user_id, stage="start")
-            session.add(user)
-            session.commit()
-
-        # Стадия start / кнопка Начать
-        if user.stage == "start" or text == "начать":
-            send_vk_message(user_id, "Привет! Выбери предмет:", keyboard=subject_keyboard)
-            user.stage = "choose_subject"
-            session.commit()
-            session.close()
-            return "ok"
-
-        # Выбор предмета
-        if user.stage == "choose_subject":
-            subject = text.capitalize()
-            if subject in ["Математика", "Русский", "Физика"]:
-                user.subject = subject
-                user.stage = "choose_level"
-                send_vk_message(user_id, "Выбери уровень сложности:", keyboard=level_keyboard)
-                session.commit()
-            else:
-                send_vk_message(user_id, "Выбери предмет из кнопок.", keyboard=subject_keyboard)
-
-        # Выбор уровня
-        elif user.stage == "choose_level":
-            level = text.capitalize()
-            if level in ["Легкий", "Средний", "Сложный"]:
-                user.level = level.lower()
-                user.stage = "answer_question"
-                user.current_question_index = 0
-                user.score = 0
-                session.commit()
-
-                # Генерация вопросов
-                questions_list = []
-                for _ in range(NUM_QUESTIONS):
-                    q, a, exp = generate_question(user.subject, user.level)
-                    question = Question(subject=user.subject, level=user.level,
-                                        question_text=q, correct_answer=a, explanation=exp)
-                    session.add(question)
-                    questions_list.append(question)
-                session.commit()
-                send_vk_message(user_id, f"Первый вопрос по {user.subject} ({user.level}):\n{questions_list[0].question_text}")
-            else:
-                send_vk_message(user_id, "Выбери уровень из кнопок.", keyboard=level_keyboard)
-
-        # Ответ на вопрос
-        elif user.stage == "answer_question":
-            question = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
-                        .offset(user.current_question_index).first()
-            if not question:
-                send_vk_message(user_id, "Вопросы закончились. Напиши 'Начать', чтобы пройти новый тест.", keyboard=start_keyboard)
-            else:
-                feedback = check_answer(text, question.correct_answer)
-                result = Result(
-                    user_id=user.id,
-                    subject=user.subject,
-                    level=user.level,
-                    question_text=question.question_text,
-                    user_answer=text,
-                    correct_answer=question.correct_answer,
-                    is_correct=feedback.lower().startswith("правильно"),
-                    explanation=question.explanation
-                )
-                session.add(result)
-                session.commit()
-                user.current_question_index += 1
-                session.commit()
-                next_message = f"{feedback}\nОбъяснение: {question.explanation}"
-                if user.current_question_index < NUM_QUESTIONS:
-                    next_q = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
-                        .offset(user.current_question_index).first()
-                    next_message += f"\nСледующий вопрос:\n{next_q.question_text}"
-                    send_vk_message(user_id, next_message)
-                else:
-                    correct_count = session.query(Result).filter(Result.user_id==user.id, Result.subject==user.subject,
-                                                                 Result.level==user.level, Result.is_correct==True).count()
-                    next_message += f"\nТест завершён! Правильных ответов: {correct_count}/{NUM_QUESTIONS}\nНапиши 'Начать', чтобы пройти новый тест."
-                    user.stage = "choose_subject"
-                    user.current_question_index = 0
-                    user.score = 0
+        if data["type"] == "message_new":
+            user_id = data["object"]["message"]["from_id"]
+            text = data["object"]["message"]["text"].strip().lower()
+            session = SessionLocal()
+            try:
+                user = session.query(User).filter(User.id==user_id).first()
+                if not user:
+                    user = User(id=user_id, stage="start")
+                    session.add(user)
                     session.commit()
-                    send_vk_message(user_id, next_message, keyboard=subject_keyboard)
-        else:
-            send_vk_message(user_id, f"Ты написал: {text}", keyboard=start_keyboard)
 
-        session.close()
-    return "ok"
+                # --- START / кнопка Начать ---
+                if user.stage == "start" or text == "начать":
+                    send_vk_message(user_id, "Привет! Выбери предмет:", keyboard=subject_keyboard)
+                    user.stage = "choose_subject"
+                    session.commit()
+                    return "ok"
+
+                # --- Выбор предмета ---
+                if user.stage == "choose_subject":
+                    subject = text.capitalize()
+                    if subject in ["Математика", "Русский", "Физика"]:
+                        user.subject = subject
+                        user.stage = "choose_level"
+                        send_vk_message(user_id, "Выбери уровень сложности:", keyboard=level_keyboard)
+                        session.commit()
+                    else:
+                        send_vk_message(user_id, "Выбери предмет из кнопок.", keyboard=subject_keyboard)
+
+                # --- Выбор уровня ---
+                elif user.stage == "choose_level":
+                    level = text.capitalize()
+                    if level in ["Легкий", "Средний", "Сложный"]:
+                        user.level = level.lower()
+                        user.stage = "answer_question"
+                        user.current_question_index = 0
+                        user.score = 0
+                        session.commit()
+
+                        # Генерация вопросов
+                        questions_list = []
+                        for _ in range(NUM_QUESTIONS):
+                            q, a, exp = generate_question(user.subject, user.level)
+                            question = Question(subject=user.subject, level=user.level,
+                                                question_text=q, correct_answer=a, explanation=exp)
+                            session.add(question)
+                            questions_list.append(question)
+                        session.commit()
+                        send_vk_message(user_id, f"Первый вопрос по {user.subject} ({user.level}):\n{questions_list[0].question_text}")
+                    else:
+                        send_vk_message(user_id, "Выбери уровень из кнопок.", keyboard=level_keyboard)
+
+                # --- Ответ на вопрос ---
+                elif user.stage == "answer_question":
+                    question = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
+                                .offset(user.current_question_index).first()
+                    if not question:
+                        send_vk_message(user_id, "Вопросы закончились. Напиши 'Начать', чтобы пройти новый тест.", keyboard=start_keyboard)
+                    else:
+                        feedback = check_answer(text, question.correct_answer)
+                        result = Result(
+                            user_id=user.id,
+                            subject=user.subject,
+                            level=user.level,
+                            question_text=question.question_text,
+                            user_answer=text,
+                            correct_answer=question.correct_answer,
+                            is_correct=feedback.lower().startswith("правильно"),
+                            explanation=question.explanation
+                        )
+                        session.add(result)
+                        session.commit()
+                        user.current_question_index += 1
+                        session.commit()
+                        next_message = f"{feedback}\nОбъяснение: {question.explanation}"
+                        if user.current_question_index < NUM_QUESTIONS:
+                            next_q = session.query(Question).filter(Question.subject==user.subject, Question.level==user.level)\
+                                .offset(user.current_question_index).first()
+                            next_message += f"\nСледующий вопрос:\n{next_q.question_text}"
+                            send_vk_message(user_id, next_message)
+                        else:
+                            correct_count = session.query(Result).filter(Result.user_id==user.id, Result.subject==user.subject,
+                                                                         Result.level==user.level, Result.is_correct==True).count()
+                            next_message += f"\nТест завершён! Правильных ответов: {correct_count}/{NUM_QUESTIONS}\nНапиши 'Начать', чтобы пройти новый тест."
+                            user.stage = "choose_subject"
+                            user.current_question_index = 0
+                            user.score = 0
+                            session.commit()
+                            send_vk_message(user_id, next_message, keyboard=subject_keyboard)
+                else:
+                    send_vk_message(user_id, f"Ты написал: {text}", keyboard=start_keyboard)
+
+            finally:
+                session.close()
+        return "ok"
+    except Exception as e:
+        print("Webhook error:", e)
+        return "ok"
