@@ -1,281 +1,199 @@
 import os
 import json
-import random
-import requests
-
 from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import (
-    create_engine, Column, Integer, String
+    create_engine, Column, Integer, String, Text
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-
 from openai import OpenAI
+import requests
 
-# =====================
-# НАСТРОЙКИ
-# =====================
+# ================== ENV ==================
 
-VK_TOKEN = os.getenv("VK_TOKEN")
-VK_CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
-VK_API_VERSION = "5.199"
-
+VK_CONFIRMATION_CODE = os.getenv("VK_CONFIRMATION_CODE")
+VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-NUM_QUESTIONS = 5
-
-# =====================
-# ИНИЦИАЛИЗАЦИЯ
-# =====================
+# ================== APP ==================
 
 app = FastAPI()
 
+# ================== DB ==================
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
-
 Base = declarative_base()
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# =====================
-# МОДЕЛИ БД
-# =====================
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    vk_id = Column(Integer, primary_key=True)
     stage = Column(String, default="start")
-    subject = Column(String)
-    level = Column(String)
-    current_question_index = Column(Integer, default=0)
-    score = Column(Integer, default=0)
+    difficulty = Column(String, nullable=True)
+    question_index = Column(Integer, default=0)
 
 
-class Question(Base):
-    __tablename__ = "questions"
+Base.metadata.create_all(bind=engine)
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
-    subject = Column(String)
-    level = Column(String)
-    question_text = Column(String)
-    correct_answer = Column(String)
-    explanation = Column(String)
+# ================== OPENAI ==================
 
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-Base.metadata.create_all(engine)
+# ================== QUESTIONS ==================
 
-# =====================
-# VK ВСПОМОГАТЕЛЬНОЕ
-# =====================
+QUESTIONS = {
+    "easy": [
+        "Сколько будет 2 + 2?",
+        "Столица России?",
+    ],
+    "medium": [
+        "Реши: 3x = 12",
+        "Что такое фотосинтез?",
+    ],
+    "hard": [
+        "Производная x²?",
+        "Объясни второй закон Ньютона",
+    ],
+}
+
+# ================== VK HELPERS ==================
 
 def send_vk_message(user_id: int, text: str, keyboard: dict | None = None):
     payload = {
         "user_id": user_id,
         "message": text,
-        "random_id": random.randint(1, 10**9),
-        "access_token": VK_TOKEN,
-        "v": VK_API_VERSION,
+        "random_id": 0,
     }
-
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
 
     requests.post(
         "https://api.vk.com/method/messages.send",
-        data=payload
+        params={
+            "access_token": VK_GROUP_TOKEN,
+            "v": "5.199",
+        },
+        json=payload,
+        timeout=5,
     )
 
 
-start_keyboard = {
-    "one_time": True,
-    "buttons": [
-        [
-            {
-                "action": {
-                    "type": "text",
-                    "label": "Начать"
-                },
-                "color": "primary"
-            }
-        ]
-    ]
-}
-
-level_keyboard = {
-    "one_time": True,
-    "buttons": [
-        [
-            {"action": {"type": "text", "label": "Легкий"}, "color": "secondary"},
-            {"action": {"type": "text", "label": "Средний"}, "color": "secondary"},
-            {"action": {"type": "text", "label": "Сложный"}, "color": "secondary"},
-        ]
-    ]
-}
-
-# =====================
-# OPENAI
-# =====================
-
-def generate_question(subject: str, level: str):
-    prompt = f"""
-Сгенерируй один вопрос по теме "{subject}".
-Сложность: {level}.
-
-Формат строго:
-Вопрос: ...
-Ответ: ...
-Пояснение: ...
-"""
-
-    response = openai_client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-
-    content = response.choices[0].message.content
-
-    lines = content.split("\n")
-    question = lines[0].replace("Вопрос:", "").strip()
-    answer = lines[1].replace("Ответ:", "").strip()
-    explanation = lines[2].replace("Пояснение:", "").strip()
-
-    return question, answer, explanation
+def start_keyboard():
+    return {
+        "one_time": True,
+        "buttons": [
+            [
+                {
+                    "action": {
+                        "type": "text",
+                        "label": "Начать",
+                    },
+                    "color": "primary",
+                }
+            ]
+        ],
+    }
 
 
-def check_answer(user_answer: str, correct_answer: str) -> bool:
-    return user_answer.strip().lower() == correct_answer.strip().lower()
+def difficulty_keyboard():
+    return {
+        "one_time": True,
+        "buttons": [
+            [
+                {"action": {"type": "text", "label": "Лёгкий"}, "color": "secondary"},
+                {"action": {"type": "text", "label": "Средний"}, "color": "secondary"},
+                {"action": {"type": "text", "label": "Сложный"}, "color": "secondary"},
+            ]
+        ],
+    }
 
-# =====================
-# WEBHOOK
-# =====================
+# ================== WEBHOOK ==================
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
-    data = await request.json()
+    try:
+        data = await request.json()
 
-    # Подтверждение сервера
-    if data["type"] == "confirmation":
-        return VK_CONFIRMATION_TOKEN
+        # --- VK confirmation ---
+        if data.get("type") == "confirmation":
+            return PlainTextResponse(VK_CONFIRMATION_CODE)
 
-    if data["type"] != "message_new":
-        return "ok"
+        if data.get("type") != "message_new":
+            return PlainTextResponse("ok")
 
-    message = data["object"]["message"]
-    user_id = message["from_id"]
-    text = message.get("text", "").strip()
+        user_id = data["object"]["message"]["from_id"]
+        text = data["object"]["message"].get("text", "").lower()
 
-    session = SessionLocal()
+        db = SessionLocal()
+        user = db.query(User).filter(User.vk_id == user_id).first()
 
-    user = session.query(User).filter(User.id == user_id).first()
-    if not user:
-        user = User(id=user_id)
-        session.add(user)
-        session.commit()
-
-    # =====================
-    # ЛОГИКА БОТА
-    # =====================
-
-    if text.lower() == "начать":
-        user.stage = "choose_level"
-        session.commit()
-
-        send_vk_message(
-            user_id,
-            "Выбери уровень сложности:",
-            keyboard=level_keyboard
-        )
-        return "ok"
-
-    if user.stage == "choose_level":
-        if text not in ["Легкий", "Средний", "Сложный"]:
-            send_vk_message(user_id, "Выбери уровень кнопкой.")
-            return "ok"
-
-        user.level = text
-        user.subject = "Общие знания"
-        user.current_question_index = 0
-        user.score = 0
-        user.stage = "quiz"
-        session.commit()
-
-        # удалить старые вопросы
-        session.query(Question).filter(
-            Question.user_id == user.id
-        ).delete()
-        session.commit()
-
-        # создать новые вопросы
-        for _ in range(NUM_QUESTIONS):
-            q, a, exp = generate_question(user.subject, user.level)
-            session.add(Question(
-                user_id=user.id,
-                subject=user.subject,
-                level=user.level,
-                question_text=q,
-                correct_answer=a,
-                explanation=exp
-            ))
-
-        session.commit()
-
-        first_question = session.query(Question).filter(
-            Question.user_id == user.id
-        ).order_by(Question.id).first()
-
-        send_vk_message(user_id, f"Вопрос 1:\n{first_question.question_text}")
-        return "ok"
-
-    if user.stage == "quiz":
-        question = session.query(Question).filter(
-            Question.user_id == user.id
-        ).order_by(Question.id).offset(
-            user.current_question_index
-        ).first()
-
-        if not question:
+        if not user:
+            user = User(vk_id=user_id)
+            db.add(user)
+            db.commit()
             send_vk_message(
                 user_id,
-                f"Тест завершён!\nРезультат: {user.score}/{NUM_QUESTIONS}",
-                keyboard=start_keyboard
+                "Привет! Я ИИ-тренажёр для подготовки к ОГЭ и ЕГЭ.",
+                start_keyboard(),
             )
-            user.stage = "start"
-            session.commit()
-            return "ok"
+            return PlainTextResponse("ok")
 
-        correct = check_answer(text, question.correct_answer)
+        # ================== FLOW ==================
 
-        if correct:
-            user.score += 1
-            feedback = "Правильно!"
-        else:
-            feedback = f"Неправильно.\nПравильный ответ: {question.correct_answer}"
+        if user.stage == "start":
+            if "начать" in text:
+                user.stage = "difficulty"
+                db.commit()
+                send_vk_message(user_id, "Выбери уровень сложности:", difficulty_keyboard())
+            else:
+                send_vk_message(user_id, "Нажми «Начать»", start_keyboard())
 
-        user.current_question_index += 1
-        session.commit()
+        elif user.stage == "difficulty":
+            if "лёгк" in text:
+                user.difficulty = "easy"
+            elif "средн" in text:
+                user.difficulty = "medium"
+            elif "сложн" in text:
+                user.difficulty = "hard"
+            else:
+                send_vk_message(user_id, "Выбери кнопкой 👇", difficulty_keyboard())
+                return PlainTextResponse("ok")
 
-        next_question = session.query(Question).filter(
-            Question.user_id == user.id
-        ).order_by(Question.id).offset(
-            user.current_question_index
-        ).first()
+            user.stage = "quiz"
+            user.question_index = 0
+            db.commit()
 
-        if next_question:
             send_vk_message(
                 user_id,
-                f"{feedback}\n\nСледующий вопрос:\n{next_question.question_text}"
+                f"Начинаем! Вопрос 1:\n{QUESTIONS[user.difficulty][0]}"
             )
-        else:
-            send_vk_message(
-                user_id,
-                f"{feedback}\n\nТест завершён!\nРезультат: {user.score}/{NUM_QUESTIONS}",
-                keyboard=start_keyboard
-            )
-            user.stage = "start"
-            session.commit()
 
-    return "ok"
+        elif user.stage == "quiz":
+            user.question_index += 1
+
+            if user.question_index >= len(QUESTIONS[user.difficulty]):
+                user.stage = "start"
+                user.difficulty = None
+                user.question_index = 0
+                db.commit()
+                send_vk_message(user_id, "Вопросы закончились. Хочешь начать заново?", start_keyboard())
+            else:
+                db.commit()
+                q = QUESTIONS[user.difficulty][user.question_index]
+                send_vk_message(user_id, f"Следующий вопрос:\n{q}")
+
+        db.close()
+        return PlainTextResponse("ok")
+
+    except Exception as e:
+        print("Webhook error:", e)
+        return PlainTextResponse("ok")
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
