@@ -7,14 +7,14 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # -------------------
-# è•‡•¨•≠≠Î• Æ™‡„¶•≠®Ô
+# –ü–µ—Ä–µ–º–µ–Ω–Ω—ã–µ –æ–∫—Ä—É–∂–µ–Ω–∏—è
 # -------------------
 VK_CONFIRMATION = os.getenv("VK_CONFIRMATION")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")  # postgres://user:pass@host:port/dbname
 
 # -------------------
-# ç†·‚‡Æ©™† ÅÑ
+# –ù–∞—Å—Ç—Ä–æ–π–∫–∞ –ë–î
 # -------------------
 Base = declarative_base()
 
@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
 
 # -------------------
-# ç†·‚‡Æ©™† OpenAI
+# –ù–∞—Å—Ç—Ä–æ–π–∫–∞ OpenAI
 # -------------------
 http_client = httpx.Client(timeout=30.0)
 client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
@@ -68,18 +68,18 @@ async def webhook(update: VKUpdate):
         session.add(progress)
         session.commit()
 
-    # ÇÆØ‡Æ·Î
+    # –í–æ–ø—Ä–æ—Å—ã
     questions = {
-        "easy": ["ë™Æ´Ï™Æ °„§•‚ 2+2?", "ë™Æ´Ï™Æ °„§•‚ 3+5?"],
-        "medium": ["ê•Ë®‚• „‡†¢≠•≠®• x+3=7", "ç†©§®‚• ™Æ‡•≠Ï „‡†¢≠•≠®Ô 2x=10"],
-        "hard": ["ÇÎÁ®·´®‚• ®≠‚•£‡†´ ?x dx", "ç†©§®‚• Ø‡Æ®ß¢Æ§≠„Ó x^2"]
+        "easy": ["–°–∫–æ–ª—å–∫–æ –±—É–¥–µ—Ç 2+2?", "–°–∫–æ–ª—å–∫–æ –±—É–¥–µ—Ç 3+5?"],
+        "medium": ["–†–µ—à–∏—Ç–µ —É—Ä–∞–≤–Ω–µ–Ω–∏–µ x+3=7", "–ù–∞–π–¥–∏—Ç–µ –∫–æ—Ä–µ–Ω—å —É—Ä–∞–≤–Ω–µ–Ω–∏—è 2x=10"],
+        "hard": ["–í—ã—á–∏—Å–ª–∏—Ç–µ –∏–Ω—Ç–µ–≥—Ä–∞–ª ‚à´x dx", "–ù–∞–π–¥–∏—Ç–µ –ø—Ä–æ–∏–∑–≤–æ–¥–Ω—É—é x^2"]
     }
 
     level_questions = questions.get(progress.level, [])
     idx = progress.question_index
 
     if idx >= len(level_questions):
-        response_text = "ÇÆØ‡Æ·Î ß†™Æ≠Á®´®·Ï"
+        response_text = "–í–æ–ø—Ä–æ—Å—ã –∑–∞–∫–æ–Ω—á–∏–ª–∏—Å—å"
         progress.completed = True
     else:
         response_text = level_questions[idx]
@@ -88,7 +88,7 @@ async def webhook(update: VKUpdate):
     session.commit()
     session.close()
 
-    # á§•·Ï ≠„¶≠Æ Æ‚Ø‡†¢®‚Ï ·ÆÆ°È•≠®• ¢ VK Á•‡•ß API (requests ®´® vk_api)
+    # –ó–¥–µ—Å—å –Ω—É–∂–Ω–æ –æ—Ç–ø—Ä–∞–≤–∏—Ç—å —Å–æ–æ–±—â–µ–Ω–∏–µ –≤ VK —á–µ—Ä–µ–∑ API (requests –∏–ª–∏ vk_api)
     print(f"Send to VK {user_id}: {response_text}")
 
     return {"status": "ok"}
