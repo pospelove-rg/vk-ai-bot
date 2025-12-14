@@ -53,7 +53,7 @@ async def root():
     return {"status": "ok"}
 
 @app.get("/webhook")
-async def verify(token: str = None):
+async def verify():
     return Response(content=VK_CONFIRMATION, media_type="text/plain")
 
 @app.post("/webhook")
@@ -68,11 +68,11 @@ async def webhook(update: VKUpdate):
         session.add(progress)
         session.commit()
 
-    # Простейшая логика вопросов
+    # Вопросы
     questions = {
         "easy": ["Сколько будет 2+2?", "Сколько будет 3+5?"],
         "medium": ["Решите уравнение x+3=7", "Найдите корень уравнения 2x=10"],
-        "hard": ["Интеграл ?x dx", "Производная x^2"]
+        "hard": ["Вычислите интеграл ?x dx", "Найдите производную x^2"]
     }
 
     level_questions = questions.get(progress.level, [])
@@ -88,8 +88,7 @@ async def webhook(update: VKUpdate):
     session.commit()
     session.close()
 
-    # Тут можно отправлять сообщение через VK API (через requests или vk_api)
+    # Здесь нужно отправить сообщение в VK через API (requests или vk_api)
     print(f"Send to VK {user_id}: {response_text}")
 
     return {"status": "ok"}
-
