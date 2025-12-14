@@ -20,7 +20,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.131"
 
-client = OpenAI()
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = FastAPI()
 
@@ -49,13 +49,11 @@ init_db()
 
 def generate_question(level: str) -> str:
     prompt = f"Придумай один вопрос уровня сложности '{level}' для викторины. Без ответа."
-
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
-
     return response.choices[0].message.content.strip()
 
 # ================= VK =================
@@ -66,12 +64,10 @@ def vk_send(user_id: int, text: str, keyboard: dict | None = None):
         "v": VK_API_VERSION,
         "user_id": user_id,
         "message": text,
-        "random_id": random.randint(1, 10**9),
+        "random_id": random.randint(1, 2**31 - 1),
     }
-
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
-
     requests.post(VK_API_URL, data=payload)
 
 def level_keyboard():
@@ -84,82 +80,87 @@ def level_keyboard():
         ],
     }
 
+def main_keyboard():
+    return {
+        "inline": True,
+        "buttons": [
+            [{"action": {"type": "text", "label": "Получить задание"}, "color": "positive"}],
+            [{"action": {"type": "text", "label": "Помощь"}, "color": "primary"}],
+        ],
+    }
+
 # ================= WEBHOOK =================
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
     data = await request.json()
-    print("VK webhook received:", data)  # Логируем данные для отладки
+    print("VK webhook received:", data)
 
-    # 1. Подтверждение сервера
     if data.get("type") == "confirmation":
         return PlainTextResponse(VK_CONFIRMATION_CODE)
 
-    # 2. Обработка новых сообщений
     if data.get("type") == "message_new":
         obj = data.get("object", {})
         user_id = obj.get("from_id")
         text = obj.get("text", "").lower()
 
         if user_id is None:
-            print("Warning: from_id not found in object")
-            return PlainTextResponse("ok")  # Возвращаем "ok", чтобы VK не блокировал
+            print("Warning: from_id not found")
+            return PlainTextResponse("ok")
 
-        if "задание" in text:
-            task = generate_openai_response("Придумай короткое математическое задание для школьника")
-            send_vk_message(user_id, task, keyboard=get_main_keyboard())
-        elif "помощь" in text:
-            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
-            send_vk_message(user_id, help_text, keyboard=get_main_keyboard())
+        conn, cur = get_db()
+
+        # ----------- ЛОГИКА ----------------
+        if text in ("начать", "start"):
+            cur.execute(
+                "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
+                (user_id, None, None),
+            )
+            vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
+
+        elif text in ("лёгкий", "средний", "сложный"):
+            levels = {"лёгкий": "easy", "средний": "medium", "сложный": "hard"}
+            level = levels[text]
+
+            # Генерируем первый вопрос
+            question = generate_question(level)
+            cur.execute(
+                "UPDATE user_progress SET level=%s, question=%s WHERE user_id=%s",
+                (level, question, user_id),
+            )
+            vk_send(user_id, f"Вопрос:\n{question}", keyboard=main_keyboard())
+
+        elif text in ("получить задание",):
+            # Получаем уровень пользователя
+            cur.execute("SELECT level FROM user_progress WHERE user_id=%s", (user_id,))
+            result = cur.fetchone()
+            if result and result[0]:
+                level = result[0]
+                # Генерируем новый вопрос
+                question = generate_question(level)
+                cur.execute(
+                    "UPDATE user_progress SET question=%s WHERE user_id=%s",
+                    (question, user_id),
+                )
+                vk_send(user_id, f"Твое новое задание:\n{question}", keyboard=main_keyboard())
+            else:
+                vk_send(user_id, "Сначала выбери уровень сложности командой «Начать».", keyboard=main_keyboard())
+
+        elif text in ("помощь",):
+            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Начать', чтобы выбрать уровень сложности."
+            vk_send(user_id, help_text, keyboard=main_keyboard())
+
         else:
-            send_vk_message(user_id, "Выбери действие на клавиатуре.", keyboard=get_main_keyboard())
+            vk_send(user_id, "Выбери действие на клавиатуре.", keyboard=main_keyboard())
 
+        cur.close()
+        conn.close()
         return PlainTextResponse("ok")
 
-    # 3. Для всех остальных событий
     return PlainTextResponse("ok")
 
-
-    # START
-    if text in ("начать", "start"):
-        cur.execute(
-            "INSERT INTO user_progress (user_id, level, question) VALUES (%s, %s, %s) "
-            "ON CONFLICT (user_id) DO UPDATE SET level = NULL, question = NULL",
-            (user_id, None, None),
-        )
-        vk_send(user_id, "Выбери уровень сложности:", level_keyboard())
-        cur.close()
-        conn.close()
-        return "ok"
-
-    # LEVEL SELECT
-    levels = {
-        "лёгкий": "easy",
-        "средний": "medium",
-        "сложный": "hard",
-    }
-
-    if text in levels:
-        level = levels[text]
-        question = generate_question(level)
-
-        cur.execute(
-            "UPDATE user_progress SET level=%s, question=%s WHERE user_id=%s",
-            (level, question, user_id),
-        )
-
-        vk_send(user_id, f"Вопрос:\n{question}")
-        cur.close()
-        conn.close()
-        return "ok"
-
-    # DEFAULT
-    vk_send(user_id, "Напиши «Начать», чтобы начать игру.")
-    cur.close()
-    conn.close()
-    return "ok"
-
-
+# ================= HEALTHCHECK =================
 
 @app.get("/")
 def healthcheck():
