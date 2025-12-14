@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 import requests
 import os
 
@@ -24,7 +24,7 @@ async def webhook(request: Request):
     data = await request.json()
 
     if data["type"] == "confirmation":
-        return CONFIRMATION_CODE
+    return Response(content=CONFIRMATION_CODE, media_type="text/plain")
 
     if data["type"] == "message_new":
         user_id = data["object"]["message"]["from_id"]
