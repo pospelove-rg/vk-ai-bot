@@ -41,7 +41,19 @@ Base.metadata.create_all(bind=engine)
 
 # ================== OPENAI ==================
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+import httpx
+from openai import OpenAI
+
+http_client = httpx.Client(
+    proxies=None,
+    timeout=30.0,
+)
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    http_client=http_client,
+)
+
 
 # ================== QUESTIONS ==================
 
