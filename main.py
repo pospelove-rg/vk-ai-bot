@@ -58,14 +58,6 @@ def generate_question(level: str) -> str:
 
     return response.choices[0].message.content.strip()
 
-def generate_openai_response(prompt: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-    )
-    return response.choices[0].message.content.strip()
-
 # ================= VK =================
 
 def vk_send(user_id: int, text: str, keyboard: dict | None = None):
@@ -104,91 +96,89 @@ def get_main_keyboard():
 @app.post("/webhook")
 async def vk_webhook(request: Request):
     data = await request.json()
-    print("VK webhook received:", data)
+    event_type = data.get("type")
+    obj = data.get("object", {})
 
-    # Подтверждение сервера
-    if data.get("type") == "confirmation":
+    # 1. Подтверждение сервера
+    if event_type == "confirmation":
         return PlainTextResponse(VK_CONFIRMATION_CODE)
 
-    # Обработка новых сообщений
-    if data.get("type") == "message_new":
-        obj = data.get("object", {})
-        user_id = obj.get("from_id")
-        text = obj.get("text", "").lower()
+    # 2. Обработка только новых сообщений
+    if event_type != "message_new":
+        return PlainTextResponse("ok")  # игнорируем все другие события
 
-        if user_id is None:
-            print("Warning: from_id not found in object")
+    message = obj.get("message", {})
+    user_id = message.get("from_id")
+    text = message.get("text", "").lower()
+
+    if user_id is None:
+        # Это всё ещё может случаться, но теперь просто игнорируем
+        return PlainTextResponse("ok")
+
+    conn, cur = get_db()
+    try:
+        # Если пользователь только начинает
+        if text in ("начать", "start"):
+            cur.execute("""
+                INSERT INTO user_progress (vk_user_id, level, question)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (vk_user_id) DO UPDATE SET level = NULL, question = NULL
+            """, (user_id, None, None))
+            vk_send(user_id, "Выбери уровень сложности:", keyboard=level_keyboard())
             return PlainTextResponse("ok")
 
-        conn, cur = get_db()
+        # Запрос задания
+        elif "получить задание" in text or "задание" in text:
+            cur.execute("SELECT level FROM user_progress WHERE vk_user_id=%s", (user_id,))
+            result = cur.fetchone()
+            level = result[0] if result else None
 
-        try:
-            # Если пользователь только начинает
-            if text in ("начать", "start"):
-                cur.execute("""
-                    INSERT INTO user_progress (vk_user_id, level, question)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (vk_user_id) DO UPDATE SET level = NULL, question = NULL
-                """, (user_id, None, None))
-                vk_send(user_id, "Выбери уровень сложности:", keyboard=level_keyboard())
-                return PlainTextResponse("ok")
-
-            # Запрос задания
-            elif "получить задание" in text or "задание" in text:
-                cur.execute("SELECT level FROM user_progress WHERE vk_user_id=%s", (user_id,))
-                result = cur.fetchone()
-                level = result[0] if result else None
-
-                if level is None:
-                    vk_send(user_id, "Сначала выбери уровень сложности:", keyboard=level_keyboard())
-                else:
-                    question = generate_question(level)
-                    cur.execute(
-                        "UPDATE user_progress SET question=%s WHERE vk_user_id=%s",
-                        (question, user_id)
-                    )
-                    vk_send(user_id, f"Вопрос:\n{question}", keyboard=get_main_keyboard())
-
-                return PlainTextResponse("ok")
-
-            # Запрос помощи
-            elif "помощь" in text:
-                help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
-                vk_send(user_id, help_text, keyboard=get_main_keyboard())
-                return PlainTextResponse("ok")
-
-            # Выбор уровня
-            levels = {
-                "лёгкий": "easy",
-                "средний": "medium",
-                "сложный": "hard",
-            }
-            if text in levels:
-                level = levels[text]
+            if level is None:
+                vk_send(user_id, "Сначала выбери уровень сложности:", keyboard=level_keyboard())
+            else:
                 question = generate_question(level)
-                cur.execute("""
-                    INSERT INTO user_progress (vk_user_id, level, question)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (vk_user_id) DO UPDATE SET level=%s, question=%s
-                """, (user_id, level, question, level, question))
+                cur.execute(
+                    "UPDATE user_progress SET question=%s WHERE vk_user_id=%s",
+                    (question, user_id)
+                )
                 vk_send(user_id, f"Вопрос:\n{question}", keyboard=get_main_keyboard())
-                return PlainTextResponse("ok")
-
-            # По умолчанию
-            vk_send(user_id, "Напиши «Начать», чтобы начать игру.", keyboard=get_main_keyboard())
             return PlainTextResponse("ok")
 
-        except Exception as e:
-            print("[DB/Logic ERROR]", e)
-            vk_send(user_id, "Произошла ошибка обработки запроса. Попробуйте позже.")
+        # Запрос помощи
+        elif "помощь" in text:
+            help_text = "Я могу сгенерировать для тебя задание. Напиши 'Получить задание'."
+            vk_send(user_id, help_text, keyboard=get_main_keyboard())
             return PlainTextResponse("ok")
 
-        finally:
-            cur.close()
-            conn.close()
+        # Выбор уровня
+        levels = {
+            "лёгкий": "easy",
+            "средний": "medium",
+            "сложный": "hard",
+        }
+        if text in levels:
+            level = levels[text]
+            question = generate_question(level)
+            cur.execute("""
+                INSERT INTO user_progress (vk_user_id, level, question)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (vk_user_id) DO UPDATE SET level=%s, question=%s
+            """, (user_id, level, question, level, question))
+            vk_send(user_id, f"Вопрос:\n{question}", keyboard=get_main_keyboard())
+            return PlainTextResponse("ok")
 
-    # Для всех остальных событий
-    return PlainTextResponse("ok")
+        # По умолчанию
+        vk_send(user_id, "Напиши «Начать», чтобы начать игру.", keyboard=get_main_keyboard())
+        return PlainTextResponse("ok")
+
+    except Exception as e:
+        print("[DB/Logic ERROR]", e)
+        vk_send(user_id, "Произошла ошибка обработки запроса. Попробуйте позже.")
+        return PlainTextResponse("ok")
+
+    finally:
+        cur.close()
+        conn.close()
 
 @app.get("/")
 def healthcheck():
