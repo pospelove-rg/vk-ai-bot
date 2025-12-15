@@ -166,12 +166,24 @@ async def vk_webhook(request: Request):
     text = msg.get("text", "").strip()
     text_lower = text.lower()
     text_upper = text.upper()
+
     print(f"[DEBUG] Пользователь {user_id} написал: {text}")
+
+    COMMANDS = {
+        "начать",
+        "статистика",
+        "сменить предмет",
+        "сменить экзамен",
+        "меню"
+    }
 
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT exam, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
+    cur.execute(
+        "SELECT exam, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s",
+        (user_id,)
+    )
     row = cur.fetchone()
 
     # ===== ПРИВЕТ =====
@@ -182,109 +194,46 @@ async def vk_webhook(request: Request):
 
     # ===== СТАТИСТИКА =====
     if text_lower == "статистика":
-        cur.execute("""
-        SELECT COUNT(*) FROM user_progress
-        WHERE vk_user_id=%s AND exam IS NOT NULL
-        """, (user_id,))
-        total = cur.fetchone()[0]
-
-        vk_send(
-            user_id,
-            f"📊 Ваша статистика:\nРешено вопросов: {total}",
-            get_main_keyboard()
+        cur.execute(
+            "SELECT COUNT(*) FROM user_progress WHERE vk_user_id=%s AND waiting_for_answer=false",
+            (user_id,)
         )
+        total = cur.fetchone()[0]
+        vk_send(user_id, f"📊 Решено вопросов: {total}", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3]:
-        question = row[2]
-        explanation = check_answer(question, msg["text"])
-
-        cur.execute("""
-        UPDATE user_progress
-        SET waiting_for_answer=false, question=NULL
-        WHERE vk_user_id=%s
-        """, (user_id,))
+    # ===== СМЕНА ПРЕДМЕТА =====
+    if text_lower == "сменить предмет" and row and row[0]:
+        cur.execute("UPDATE user_progress SET subject=NULL WHERE vk_user_id=%s", (user_id,))
         conn.commit()
-
-        vk_send(user_id, explanation, get_game_keyboard())
+        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(row[0]))
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== НАЧАТЬ =====
-    if text_lower == "начать":
-        # если экзамен и предмет уже выбраны — даём новый вопрос
-        if row and row[0] and row[1]:
-            exam, subject = row[0], row[1]
-            question = generate_question(exam, subject)
-
-            cur.execute("""
-            UPDATE user_progress
-            SET question=%s, waiting_for_answer=true
-            WHERE vk_user_id=%s
-            """, (question, user_id))
-            conn.commit()
-
-            vk_send(
-    user_id,
-    f"Новый вопрос:\n{question}",
-    get_game_keyboard()
-)
-            conn.close()
-            return PlainTextResponse("ok")
-
-        # иначе — обычный старт
-        cur.execute("""
-        INSERT INTO user_progress (vk_user_id)
-        VALUES (%s)
-        ON CONFLICT (vk_user_id) DO NOTHING
-        """, (user_id,))
+    # ===== СМЕНА ЭКЗАМЕНА =====
+    if text_lower == "сменить экзамен":
+        cur.execute(
+            "UPDATE user_progress SET exam=NULL, subject=NULL WHERE vk_user_id=%s",
+            (user_id,)
+        )
         conn.commit()
-
         vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ВЫБОР ЭКЗАМЕНА =====
-    if text_upper in ("ОГЭ", "ЕГЭ"):
-        cur.execute("""
-        UPDATE user_progress SET exam=%s WHERE vk_user_id=%s
-        """, (text_upper, user_id))
+    # ===== ОТВЕТ НА ВОПРОС =====
+    if row and row[3] and text_lower not in COMMANDS:
+        explanation = check_answer(row[2], text)
+        cur.execute(
+            "UPDATE user_progress SET waiting_for_answer=false, question=NULL WHERE vk_user_id=%s",
+            (user_id,)
+        )
         conn.commit()
-
-        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text.upper()))
+        vk_send(user_id, explanation, get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ВЫБОР ПРЕДМЕТА =====
-    if row and row[0] and not row[1]:
-        exam = row[0]
-        subject = msg["text"]
-
-        cur.execute("""
-        UPDATE user_progress SET subject=%s WHERE vk_user_id=%s
-        """, (subject, user_id))
-        conn.commit()
-
-        question = generate_question(exam, subject)
-
-        cur.execute("""
-        UPDATE user_progress
-        SET question=%s, waiting_for_answer=true
-        WHERE vk_user_id=%s
-        """, (question, user_id))
-        conn.commit()
-
-        vk_send(
-    user_id,
-    f"Вопрос:\n{question}",
-    get_game_keyboard()
-)
-        conn.close()
-        return PlainTextResponse("ok")
-
-    
     # ===== ПО УМОЛЧАНИЮ =====
     vk_send(user_id, "Используйте кнопки или напишите «Начать».", get_main_keyboard())
     conn.close()
