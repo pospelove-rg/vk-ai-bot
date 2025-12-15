@@ -174,8 +174,13 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== СЛУЖЕБНЫЕ КОМАНДЫ ПРИ АКТИВНОМ ВОПРОСЕ =====
+    if row and row[3] and text_lower in ("привет", "меню", "статистика", "начать"):
+    # ничего не отвечаем как на вопрос
+    pass
+
     # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3] and text_lower not in ("начать", "стоп", "меню"):
+    if row and row[3] and text_lower not in ("привет", "меню", "статистика", "начать"):
         question = row[2]
         explanation = check_answer(question, msg["text"])
 
@@ -187,6 +192,22 @@ async def vk_webhook(request: Request):
         conn.commit()
 
         vk_send(user_id, explanation, get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== СТАТИСТИКА =====
+    if text_lower == "статистика":
+        cur.execute("""
+        SELECT COUNT(*) FROM user_progress
+        WHERE vk_user_id=%s AND exam IS NOT NULL
+        """, (user_id,))
+        total = cur.fetchone()[0]
+
+        vk_send(
+            user_id,
+            f"📊 Ваша статистика:\nРешено вопросов: {total}",
+            get_main_keyboard()
+        )
         conn.close()
         return PlainTextResponse("ok")
 
