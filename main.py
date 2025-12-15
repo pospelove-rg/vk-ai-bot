@@ -159,16 +159,33 @@ async def vk_webhook(request: Request):
 
     # ===== НАЧАТЬ =====
     if text == "начать":
+    # если экзамен и предмет уже выбраны — даём новый вопрос
+    if row and row[0] and row[1]:
+        exam, subject = row[0], row[1]
+        question = generate_question(exam, subject)
+
         cur.execute("""
-        INSERT INTO user_progress (vk_user_id)
-        VALUES (%s)
-        ON CONFLICT (vk_user_id) DO NOTHING
-        """, (user_id,))
+        UPDATE user_progress
+        SET question=%s, waiting_for_answer=true
+        WHERE vk_user_id=%s
+        """, (question, user_id))
         conn.commit()
 
-        vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+        vk_send(user_id, f"Новый вопрос:\n{question}")
         conn.close()
         return PlainTextResponse("ok")
+
+    # иначе — обычный старт
+    cur.execute("""
+    INSERT INTO user_progress (vk_user_id)
+    VALUES (%s)
+    ON CONFLICT (vk_user_id) DO NOTHING
+    """, (user_id,))
+    conn.commit()
+
+    vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+    conn.close()
+    return PlainTextResponse("ok")
 
     # ===== ВЫБОР ЭКЗАМЕНА =====
     if text.upper() in ("ОГЭ", "ЕГЭ"):
