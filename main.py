@@ -1,21 +1,30 @@
+import os
+import json
+import psycopg2
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from openai import OpenAI
-import psycopg2
-import os
-import json
+import requests
+
+# ================== CONFIG ==================
+
+VK_TOKEN = os.getenv("VK_TOKEN")
+VK_CONFIRMATION = os.getenv("VK_CONFIRMATION")
+
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = FastAPI()
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Настройки БД
-DB_HOST = "dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com"
-DB_PORT = 5432
-DB_USER = "vk_ai_bot_db_user"
-DB_PASSWORD = "2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC"
-DB_NAME = "vk_ai_bot_db"
+# ================== DB ==================
 
-# Соединение с БД
 def get_connection():
     return psycopg2.connect(
         host=DB_HOST,
@@ -25,133 +34,194 @@ def get_connection():
         database=DB_NAME
     )
 
-# Клавиатуры ВК
+# ================== VK SEND ==================
+
+def vk_send(user_id: int, message: str, keyboard: dict | None = None):
+    payload = {
+        "user_id": user_id,
+        "message": message,
+        "random_id": 0,
+        "access_token": VK_TOKEN,
+        "v": "5.131"
+    }
+    if keyboard:
+        payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
+
+    requests.post(
+        "https://api.vk.com/method/messages.send",
+        data=payload
+    )
+
+    print(f"[VK_SEND] to {user_id}: {message}")
+
+# ================== KEYBOARDS ==================
+
 def get_main_keyboard():
     return {
         "one_time": False,
         "buttons": [
-            [{"action": {"type": "text", "label": "Начать"}}]
+            [{"action": {"type": "text", "label": "Начать"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "Статистика"}, "color": "secondary"}]
         ]
     }
 
-def get_subject_keyboard(exam_type):
-    if exam_type == "ОГЭ":
-        subjects = ["Математика", "Русский язык", "Физика", "Химия", "Биология"]
-    else:
-        subjects = ["Математика", "Русский язык", "Физика", "Химия", "Биология", "История", "Обществознание", "Информатика"]
-    
-    buttons = [[{"action": {"type": "text", "label": subj}}] for subj in subjects]
+def get_exam_keyboard():
+    return {
+        "one_time": True,
+        "buttons": [
+            [{"action": {"type": "text", "label": "ОГЭ"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "ЕГЭ"}, "color": "primary"}]
+        ]
+    }
+
+def get_subject_keyboard(exam: str):
+    subjects = {
+        "ОГЭ": [
+            "Математика", "Русский язык", "Английский язык", "Физика",
+            "Химия", "Биология", "География", "История",
+            "Обществознание", "Информатика"
+        ],
+        "ЕГЭ": [
+            "Математика профиль", "Русский язык", "Английский язык", "Физика",
+            "Химия", "Биология", "География", "История",
+            "Обществознание", "Информатика"
+        ]
+    }
+
+    buttons = []
+    for s in subjects[exam]:
+        buttons.append([{"action": {"type": "text", "label": s}, "color": "secondary"}])
+
     return {"one_time": True, "buttons": buttons}
 
-# VK send
-def vk_send(user_id, text, keyboard=None):
-    print(f"[VK_SEND] to {user_id}: {text}")
-    # Здесь можно вызвать VK API для отправки сообщений
+# ================== OPENAI ==================
 
-# Генерация вопроса
-def generate_question(subject, level):
-    return f"Вопрос по {subject} ({level})"
-
-# Проверка ответа через OpenAI
-def check_answer(question, user_answer):
+def generate_question(exam: str, subject: str):
     prompt = f"""
-    Я учитель школьникa. Вот вопрос: "{question}"
-    Вот ответ ученика: "{user_answer}"
-    Скажи, правильно ли он ответил. 
-    Если неправильно, объясни коротко и дай правильный ответ.
-    Ответь в формате:
-    Верно или Неверно
-    Объяснение
-    Правильный ответ
-    """
-    response = openai_client.chat.completions.create(
-        model="gpt-4.1-mini",
+Ты экзаменатор {exam}.
+Сформулируй ОДИН школьный вопрос по предмету "{subject}".
+Без вариантов ответа.
+"""
+
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}]
     )
-    content = response.choices[0].message.content.strip()
-    return content
+    return r.choices[0].message.content.strip()
+
+def check_answer(question: str, user_answer: str):
+    prompt = f"""
+Вопрос:
+{question}
+
+Ответ ученика:
+{user_answer}
+
+Определи, правильный ли ответ.
+Если неверный — объясни решение.
+"""
+
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return r.choices[0].message.content.strip()
+
+# ================== WEBHOOK ==================
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
-    event = await request.json()
-    event_type = event.get("type")
-    
-    # Игнорируем системные события, которые не являются сообщениями от пользователя
-    if event_type not in ["message_new", "message_reply"]:
+    data = await request.json()
+
+    if data["type"] == "confirmation":
+        return PlainTextResponse(VK_CONFIRMATION)
+
+    if data["type"] != "message_new":
         return PlainTextResponse("ok")
 
-    msg = event.get("object", {}).get("message", {})
-    
-    # Безопасное извлечение user_id
-    user_id = msg.get("from_id") or msg.get("peer_id")
-    if not user_id:
-        return PlainTextResponse("ok")  # если user_id не определился, игнорируем
+    msg = data["object"]["message"]
+    user_id = msg["from_id"]
+    text = msg["text"].strip().lower()
 
-    text = msg.get("text", "").strip().lower()
     print(f"[DEBUG] Пользователь {user_id} написал: {text}")
 
-    # Подключение к базе
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-    except Exception as e:
-        print(f"[DB ERROR] {e}")
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT exam, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
+    row = cur.fetchone()
+
+    # ===== ПРИВЕТ =====
+    if text in ("привет", "hello", "hi"):
+        vk_send(user_id, "Привет! Я бот для подготовки к ОГЭ и ЕГЭ.", get_main_keyboard())
+        conn.close()
         return PlainTextResponse("ok")
 
-    # Проверяем есть ли пользователь в базе
-    cur.execute("SELECT vk_user_id, subject, level, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
-    user = cur.fetchone()
-
-    # Если пользователь новый — создаем запись
-    if not user:
-        cur.execute(
-            "INSERT INTO user_progress (vk_user_id, waiting_for_answer) VALUES (%s, %s)",
-            (user_id, False)
-        )
-        conn.commit()
-        user = (user_id, None, None, None, False)
-
-    # Основная логика
+    # ===== НАЧАТЬ =====
     if text == "начать":
-        vk_send(user_id, "Выберите экзамен: ОГЭ или ЕГЭ", keyboard=get_exam_keyboard())
-        cur.execute(
-            "UPDATE user_progress SET waiting_for_answer=%s WHERE vk_user_id=%s",
-            (True, user_id)
-        )
+        cur.execute("""
+        INSERT INTO user_progress (vk_user_id)
+        VALUES (%s)
+        ON CONFLICT (vk_user_id) DO NOTHING
+        """, (user_id,))
         conn.commit()
-    elif text in ["огэ", "егэ"] and user[4]:  # waiting_for_answer
-        exam = text.upper()
-        vk_send(user_id, f"Вы выбрали {exam}. Теперь выберите предмет.", keyboard=get_subject_keyboard(exam))
-        cur.execute(
-            "UPDATE user_progress SET subject=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
-            (exam, True, user_id)
-        )
-        conn.commit()
-    elif user[4]:  # waiting_for_answer, ожидаем выбор предмета
-        subject = text.title()
-        vk_send(user_id, f"Вы выбрали предмет {subject}. Начинаем игру!")
-        question = generate_question(subject)  # Ваша функция генерации вопросов
-        vk_send(user_id, f"Вопрос:\n{question}")
-        cur.execute(
-            "UPDATE user_progress SET question=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
-            (question, True, user_id)
-        )
-        conn.commit()
-    else:
-        # Обработка ответов на вопросы
-        if user[3]:  # question
-            correct, explanation = check_answer(user[3], text)  # Ваша функция проверки ответа
-            if correct:
-                vk_send(user_id, f"Правильно! {explanation}")
-            else:
-                vk_send(user_id, f"Неправильно. {explanation}")
-            vk_send(user_id, "Напишите 'Начать', чтобы получить следующий вопрос или сменить предмет.")
-            cur.execute(
-                "UPDATE user_progress SET last_answer=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
-                (text, False, user_id)
-            )
-            conn.commit()
 
-    cur.close()
+        vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== ВЫБОР ЭКЗАМЕНА =====
+    if text.upper() in ("ОГЭ", "ЕГЭ"):
+        cur.execute("""
+        UPDATE user_progress SET exam=%s WHERE vk_user_id=%s
+        """, (text.upper(), user_id))
+        conn.commit()
+
+        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text.upper()))
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== ВЫБОР ПРЕДМЕТА =====
+    if row and row[0] and not row[1]:
+        exam = row[0]
+        subject = msg["text"]
+
+        cur.execute("""
+        UPDATE user_progress SET subject=%s WHERE vk_user_id=%s
+        """, (subject, user_id))
+        conn.commit()
+
+        question = generate_question(exam, subject)
+
+        cur.execute("""
+        UPDATE user_progress
+        SET question=%s, waiting_for_answer=true
+        WHERE vk_user_id=%s
+        """, (question, user_id))
+        conn.commit()
+
+        vk_send(user_id, f"Вопрос:\n{question}")
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== ОТВЕТ НА ВОПРОС =====
+    if row and row[3]:
+        question = row[2]
+        explanation = check_answer(question, msg["text"])
+
+        cur.execute("""
+        UPDATE user_progress
+        SET waiting_for_answer=false, question=NULL
+        WHERE vk_user_id=%s
+        """, (user_id,))
+        conn.commit()
+
+        vk_send(user_id, explanation)
+        vk_send(user_id, "Напишите «Начать», чтобы продолжить.", get_main_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== ПО УМОЛЧАНИЮ =====
+    vk_send(user_id, "Используйте кнопки или напишите «Начать».", get_main_keyboard())
     conn.close()
     return PlainTextResponse("ok")
