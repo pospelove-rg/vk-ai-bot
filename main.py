@@ -1,26 +1,18 @@
 import os
 import json
 import psycopg2
+import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from openai import OpenAI
-import requests
 
 # ================== CONFIG ==================
 
 VK_TOKEN = os.getenv("VK_TOKEN")
 VK_CONFIRMATION = os.getenv("VK_CONFIRMATION")
-
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 app = FastAPI()
 
 # ================== DB ==================
@@ -47,11 +39,7 @@ def vk_send(user_id: int, message: str, keyboard: dict | None = None):
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
 
-    requests.post(
-        "https://api.vk.com/method/messages.send",
-        data=payload
-    )
-
+    requests.post("https://api.vk.com/method/messages.send", data=payload)
     print(f"[VK_SEND] to {user_id}: {message}")
 
 # ================== KEYBOARDS ==================
@@ -65,40 +53,6 @@ def get_main_keyboard():
         ]
     }
 
-
-def get_difficulty_keyboard(exam: str):
-    if exam == "ОГЭ":
-        levels = ["Базовый", "Повышенный"]
-    else:  # ЕГЭ
-        levels = ["Базовый", "Профильный"]
-
-    buttons = []
-    for lvl in levels:
-        buttons.append([
-            {"action": {"type": "text", "label": lvl}, "color": "secondary"}
-        ])
-
-    return {
-        "one_time": False,
-        "buttons": buttons
-    }
-
-def get_game_keyboard():
-    return {
-        "one_time": False,
-        "buttons": [
-            [
-                {"action": {"type": "text", "label": "Начать"}, "color": "primary"},
-                {"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"}
-            ],
-            [
-                {"action": {"type": "text", "label": "Сменить экзамен"}, "color": "secondary"},
-                {"action": {"type": "text", "label": "Статистика"}, "color": "secondary"}
-            ]
-        ]
-    }
-
-
 def get_exam_keyboard():
     return {
         "one_time": False,
@@ -108,30 +62,35 @@ def get_exam_keyboard():
         ]
     }
 
-
 def get_subject_keyboard(exam: str):
     subjects = {
-        "ОГЭ": [
-            "Математика", "Русский язык", "Английский язык", "Физика",
-            "Химия", "Биология", "География", "История",
-            "Обществознание", "Информатика"
-        ],
-        "ЕГЭ": [
-            "Математика профиль", "Русский язык", "Английский язык", "Физика",
-            "Химия", "Биология", "География", "История",
-            "Обществознание", "Информатика"
+        "ОГЭ": ["Математика", "Русский язык", "Английский язык", "Физика", "Информатика"],
+        "ЕГЭ": ["Математика профиль", "Русский язык", "Английский язык", "Физика", "Информатика"]
+    }
+    return {
+        "one_time": False,
+        "buttons": [[{"action": {"type": "text", "label": s}, "color": "secondary"}] for s in subjects.get(exam, [])]
+    }
+
+def get_difficulty_keyboard():
+    return {
+        "one_time": False,
+        "buttons": [
+            [{"action": {"type": "text", "label": "Базовый"}, "color": "secondary"}],
+            [{"action": {"type": "text", "label": "Повышенный"}, "color": "secondary"}],
+            [{"action": {"type": "text", "label": "Профильный"}, "color": "secondary"}]
         ]
     }
 
-    buttons = []
-    for s in subjects.get(exam, []):
-        buttons.append([
-            {"action": {"type": "text", "label": s}, "color": "secondary"}
-        ])
-
+def get_game_keyboard():
     return {
         "one_time": False,
-        "buttons": buttons
+        "buttons": [
+            [{"action": {"type": "text", "label": "Начать"}, "color": "primary"}],
+            [{"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"}],
+            [{"action": {"type": "text", "label": "Сменить экзамен"}, "color": "secondary"}],
+            [{"action": {"type": "text", "label": "Статистика"}, "color": "secondary"}]
+        ]
     }
 
 # ================== OPENAI ==================
@@ -143,26 +102,22 @@ def generate_question(exam: str, subject: str, difficulty: str):
 Сформулируй ОДИН школьный вопрос по предмету "{subject}".
 Без вариантов ответа.
 """
-
-
     r = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}]
     )
     return r.choices[0].message.content.strip()
 
-def check_answer(question: str, user_answer: str):
+def check_answer(question: str, answer: str):
     prompt = f"""
 Вопрос:
 {question}
 
 Ответ ученика:
-{user_answer}
+{answer}
 
-Определи, правильный ли ответ.
-Если неверный — объясни решение.
+Оцени ответ. Если неверно — объясни.
 """
-
     r = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}]
@@ -187,207 +142,107 @@ async def vk_webhook(request: Request):
     text_lower = text.lower()
     text_upper = text.upper()
 
-    print(f"[DEBUG] Пользователь {user_id} написал: {text}")
-
     COMMANDS = {
-        "начать",
-        "статистика",
-        "сменить предмет",
-        "сменить экзамен",
-        "меню"
+        "начать", "статистика", "сменить предмет", "сменить экзамен",
+        "базовый", "повышенный", "профильный"
     }
 
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT exam, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s",
-        (user_id,)
-    )
+    cur.execute("""
+        SELECT exam, subject, difficulty, question, waiting_for_answer
+        FROM user_progress
+        WHERE vk_user_id=%s
+    """, (user_id,))
     row = cur.fetchone()
 
-    # ===== НАЧАТЬ =====
-    if text_lower == "начать" and row:
-        exam, subject, difficulty = row[0], row[1], row[2]
-
-        if not exam:
-            vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
-            return PlainTextResponse("ok")
-
-        if not subject:
-            vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
-            return PlainTextResponse("ok")
-
-        if not difficulty:
-            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard(exam))
-            return PlainTextResponse("ok")
-
-        # всё выбрано — даём вопрос
-
-
-    # ===== ПРИВЕТ =====
-    if text_lower in ("привет", "hello", "hi"):
-        vk_send(user_id, "Привет! Я бот для подготовки к ОГЭ и ЕГЭ.", get_main_keyboard())
-        conn.close()
-        return PlainTextResponse("ok")
-
-    # ===== СТАТИСТИКА =====
-    if text_lower == "статистика":
-        cur.execute("""
-            SELECT
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE is_correct = true) AS correct
-            FROM user_answers
-            WHERE vk_user_id = %s
-        """, (user_id,))
-
-        total, correct = cur.fetchone()
-        incorrect = total - correct
-
-        vk_send(
-            user_id,
-            f"""📊 Ваша статистика:
-    Всего ответов: {total}
-    ✅ Правильных: {correct}
-    ❌ Неправильных: {incorrect}""",
-            get_game_keyboard()
-        )
-        conn.close()
-        return PlainTextResponse("ok")
-
-    # ===== СМЕНА ПРЕДМЕТА =====
-    if text_lower == "сменить предмет" and row and row[0]:
-        cur.execute("""
-            UPDATE user_progress
-            SET subject=NULL,
-                question=NULL,
-                waiting_for_answer=false
-            WHERE vk_user_id=%s
-        """, (user_id,))
-        conn.commit()
-        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(row[0]))
-        conn.close()
-        return PlainTextResponse("ok")
-
-
-    # ===== СМЕНА ЭКЗАМЕНА =====
-    if text_lower == "сменить экзамен":
-        cur.execute("""
-            UPDATE user_progress
-            SET exam=NULL,
-                subject=NULL,
-                question=NULL,
-                waiting_for_answer=false
-            WHERE vk_user_id=%s
-        """, (user_id,))
+    # INIT USER
+    if not row:
+        cur.execute("INSERT INTO user_progress (vk_user_id) VALUES (%s)", (user_id,))
         conn.commit()
         vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ВЫБОР ЭКЗАМЕНА =====
-    if row and row[0] is None and text_upper in ("ОГЭ", "ЕГЭ"):
-        cur.execute("""
-            UPDATE user_progress
-            SET exam=%s,
-                subject=NULL,
-                question=NULL,
-                waiting_for_answer=false
-            WHERE vk_user_id=%s
-        """, (text_upper, user_id))
-        conn.commit()
+    exam, subject, difficulty, question, waiting = row
 
-        vk_send(
-            user_id,
-            "Экзамен выбран. Выберите предмет:",
-            get_subject_keyboard(text_upper)
-        )
+    # ===== СТАТИСТИКА =====
+    if text_lower == "статистика":
+        cur.execute("""
+            SELECT COUNT(*) FROM user_progress
+            WHERE vk_user_id=%s AND waiting_for_answer=false
+        """, (user_id,))
+        total = cur.fetchone()[0]
+        vk_send(user_id, f"📊 Решено вопросов: {total}", get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== СМЕНА =====
+    if text_lower == "сменить экзамен":
+        cur.execute("UPDATE user_progress SET exam=NULL, subject=NULL, difficulty=NULL WHERE vk_user_id=%s", (user_id,))
+        conn.commit()
+        vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
+    if text_lower == "сменить предмет" and exam:
+        cur.execute("UPDATE user_progress SET subject=NULL, difficulty=NULL WHERE vk_user_id=%s", (user_id,))
+        conn.commit()
+        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # ===== ВЫБОР ЭКЗАМЕНА =====
+    if text_upper in ("ОГЭ", "ЕГЭ"):
+        cur.execute("UPDATE user_progress SET exam=%s WHERE vk_user_id=%s", (text_upper, user_id))
+        conn.commit()
+        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text_upper))
         conn.close()
         return PlainTextResponse("ok")
 
     # ===== ВЫБОР ПРЕДМЕТА =====
-    if row and row[0] and row[1] is None:
-        subject = text
-
-        # проверяем, что это реально предмет
-        valid_subjects = {
-            "ОГЭ": [
-                "Математика", "Русский язык", "Английский язык", "Физика",
-                "Химия", "Биология", "География", "История",
-                "Обществознание", "Информатика"
-            ],
-            "ЕГЭ": [
-                "Математика профиль", "Русский язык", "Английский язык", "Физика",
-                "Химия", "Биология", "География", "История",
-                "Обществознание", "Информатика"
-            ]
-        }
-
-        if subject in valid_subjects.get(row[0], []):
-            cur.execute("""
-                UPDATE user_progress
-                SET subject=%s,
-                    question=NULL,
-                    waiting_for_answer=false
-                WHERE vk_user_id=%s
-            """, (subject, user_id))
-            conn.commit()
-
-            vk_send(
-                user_id,
-                "Предмет выбран. Нажмите «Начать» для получения вопроса.",
-                get_game_keyboard()
-            )
-            conn.close()
-            return PlainTextResponse("ok")
-
-    # ===== ВЫБОР СЛОЖНОСТИ =====
-    if row and row[0] and row[1] and row[4] is None:
-        difficulty = text
-
-        cur.execute("""
-            UPDATE user_progress
-            SET difficulty=%s
-            WHERE vk_user_id=%s
-        """, (difficulty, user_id))
+    if exam and not subject:
+        cur.execute("UPDATE user_progress SET subject=%s WHERE vk_user_id=%s", (text, user_id))
         conn.commit()
-
-        vk_send(
-            user_id,
-            "Уровень сложности выбран. Нажмите «Начать».",
-            get_game_keyboard()
-        )
+        vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3] and text_lower not in COMMANDS:
-        explanation = check_answer(row[2], text)
+    # ===== ВЫБОР СЛОЖНОСТИ =====
+    if subject and difficulty is None and text_lower in ("базовый", "повышенный", "профильный"):
+        cur.execute("UPDATE user_progress SET difficulty=%s WHERE vk_user_id=%s", (text, user_id))
+        conn.commit()
+        vk_send(user_id, "Нажмите «Начать» для получения вопроса.", get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
 
-        is_correct = any(
-            phrase in explanation.lower()
-            for phrase in ("ответ верный", "ответ правильный", "верно")
-        )
-
-        cur.execute("""
-            INSERT INTO user_answers (vk_user_id, exam, subject, is_correct)
-            VALUES (%s, %s, %s, %s)
-        """, (user_id, row[0], row[1], is_correct))
-
+    # ===== НАЧАТЬ =====
+    if text_lower == "начать" and exam and subject and difficulty:
+        q = generate_question(exam, subject, difficulty)
         cur.execute("""
             UPDATE user_progress
-            SET waiting_for_answer = false,
-                question = NULL
-            WHERE vk_user_id = %s
-        """, (user_id,))
-
+            SET question=%s, waiting_for_answer=true
+            WHERE vk_user_id=%s
+        """, (q, user_id))
         conn.commit()
+        vk_send(user_id, f"Вопрос:\n{q}", get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
 
+    # ===== ОТВЕТ =====
+    if waiting and text_lower not in COMMANDS:
+        explanation = check_answer(question, text)
+        cur.execute("""
+            UPDATE user_progress
+            SET waiting_for_answer=false, question=NULL
+            WHERE vk_user_id=%s
+        """, (user_id,))
+        conn.commit()
         vk_send(user_id, explanation, get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ПО УМОЛЧАНИЮ =====
-    vk_send(user_id, "Используйте кнопки или напишите «Начать».", get_main_keyboard())
+    vk_send(user_id, "Используйте кнопки.", get_game_keyboard())
     conn.close()
     return PlainTextResponse("ok")
