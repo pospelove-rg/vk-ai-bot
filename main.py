@@ -9,10 +9,10 @@ app = FastAPI()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Настройки БД
-DB_HOST = "ваш_хост"
+DB_HOST = "dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com"
 DB_PORT = 5432
-DB_USER = "ваш_логин"
-DB_PASSWORD = "ваш_пароль"
+DB_USER = "vk_ai_bot_db_user"
+DB_PASSWORD = "2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC"
 DB_NAME = "vk_ai_bot_db"
 
 # Соединение с БД
