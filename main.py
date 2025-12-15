@@ -157,6 +157,22 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== ОТВЕТ НА ВОПРОС =====
+    if row and row[3]:
+        question = row[2]
+        explanation = check_answer(question, msg["text"])
+
+        cur.execute("""
+        UPDATE user_progress
+        SET waiting_for_answer=false, question=NULL
+        WHERE vk_user_id=%s
+        """, (user_id,))
+        conn.commit()
+
+        vk_send(user_id, explanation, get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
     # ===== НАЧАТЬ =====
     if text == "начать":
         # если экзамен и предмет уже выбраны — даём новый вопрос
@@ -217,26 +233,10 @@ async def vk_webhook(request: Request):
         """, (question, user_id))
         conn.commit()
 
-        vk_send(user_id, f"Вопрос:\n{question}")
+        vk_send(user_id, f"Вопрос:\n{question}", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3]:
-        question = row[2]
-        explanation = check_answer(question, msg["text"])
-
-        cur.execute("""
-        UPDATE user_progress
-        SET waiting_for_answer=false, question=NULL
-        WHERE vk_user_id=%s
-        """, (user_id,))
-        conn.commit()
-
-        vk_send(user_id, explanation)
-        vk_send(user_id, "Напишите «Начать», чтобы продолжить.", get_main_keyboard())
-        conn.close()
-        return PlainTextResponse("ok")
 
     # ===== ПО УМОЛЧАНИЮ =====
     vk_send(user_id, "Используйте кнопки или напишите «Начать».", get_main_keyboard())
