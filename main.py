@@ -65,6 +65,24 @@ def get_main_keyboard():
         ]
     }
 
+
+def get_difficulty_keyboard(exam: str):
+    if exam == "ОГЭ":
+        levels = ["Базовый", "Повышенный"]
+    else:  # ЕГЭ
+        levels = ["Базовый", "Профильный"]
+
+    buttons = []
+    for lvl in levels:
+        buttons.append([
+            {"action": {"type": "text", "label": lvl}, "color": "secondary"}
+        ])
+
+    return {
+        "one_time": False,
+        "buttons": buttons
+    }
+
 def get_game_keyboard():
     return {
         "one_time": False,
@@ -118,12 +136,14 @@ def get_subject_keyboard(exam: str):
 
 # ================== OPENAI ==================
 
-def generate_question(exam: str, subject: str):
+def generate_question(exam: str, subject: str, difficulty: str):
     prompt = f"""
 Ты экзаменатор {exam}.
+Уровень сложности: {difficulty}.
 Сформулируй ОДИН школьный вопрос по предмету "{subject}".
 Без вариантов ответа.
 """
+
 
     r = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -187,34 +207,23 @@ async def vk_webhook(request: Request):
     row = cur.fetchone()
 
     # ===== НАЧАТЬ =====
-    if text_lower == "начать":
-        if not row:
-            cur.execute(
-                "INSERT INTO user_progress (vk_user_id) VALUES (%s)",
-                (user_id,)
-            )
-            conn.commit()
-            row = (None, None, None, False)
+    if text_lower == "начать" and row:
+        exam, subject, difficulty = row[0], row[1], row[2]
 
-        if not row[0]:
+        if not exam:
             vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
-            conn.close()
             return PlainTextResponse("ok")
 
-        if not row[1]:
-            vk_send(user_id, "Выберите предмет:", get_subject_keyboard(row[0]))
-            conn.close()
+        if not subject:
+            vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
             return PlainTextResponse("ok")
 
-        question = generate_question(row[0], row[1])
-        cur.execute(
-            "UPDATE user_progress SET question=%s, waiting_for_answer=true WHERE vk_user_id=%s",
-            (question, user_id)
-        )
-        conn.commit()
-        vk_send(user_id, f"Вопрос:\n{question}", get_game_keyboard())
-        conn.close()
-        return PlainTextResponse("ok")
+        if not difficulty:
+            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard(exam))
+            return PlainTextResponse("ok")
+
+        # всё выбрано — даём вопрос
+
 
     # ===== ПРИВЕТ =====
     if text_lower in ("привет", "hello", "hi"):
@@ -276,6 +285,26 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== ВЫБОР ЭКЗАМЕНА =====
+    if row and row[0] is None and text_upper in ("ОГЭ", "ЕГЭ"):
+        cur.execute("""
+            UPDATE user_progress
+            SET exam=%s,
+                subject=NULL,
+                question=NULL,
+                waiting_for_answer=false
+            WHERE vk_user_id=%s
+        """, (text_upper, user_id))
+        conn.commit()
+
+        vk_send(
+            user_id,
+            "Экзамен выбран. Выберите предмет:",
+            get_subject_keyboard(text_upper)
+        )
+        conn.close()
+        return PlainTextResponse("ok")
+
     # ===== ВЫБОР ПРЕДМЕТА =====
     if row and row[0] and row[1] is None:
         subject = text
@@ -311,6 +340,25 @@ async def vk_webhook(request: Request):
             )
             conn.close()
             return PlainTextResponse("ok")
+
+    # ===== ВЫБОР СЛОЖНОСТИ =====
+    if row and row[0] and row[1] and row[4] is None:
+        difficulty = text
+
+        cur.execute("""
+            UPDATE user_progress
+            SET difficulty=%s
+            WHERE vk_user_id=%s
+        """, (difficulty, user_id))
+        conn.commit()
+
+        vk_send(
+            user_id,
+            "Уровень сложности выбран. Нажмите «Начать».",
+            get_game_keyboard()
+        )
+        conn.close()
+        return PlainTextResponse("ok")
 
     # ===== ОТВЕТ НА ВОПРОС =====
     if row and row[3] and text_lower not in COMMANDS:
