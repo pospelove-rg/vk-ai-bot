@@ -117,93 +117,111 @@ def level_keyboard():
 @app.post("/webhook")
 async def vk_webhook(request: Request):
     data = await request.json()
-    print("VK webhook received:", data)
+    print("VK webhook received:", data)  # Логируем данные для отладки
 
+    # 1. Подтверждение сервера
     if data.get("type") == "confirmation":
         return PlainTextResponse(VK_CONFIRMATION_CODE)
 
-    if data.get("type") == "message_new":
-        obj = data.get("object", {})
-        user_id = obj.get("from_id")
-        text = obj.get("text", "").lower()
+    # 2. Обрабатываем только новые сообщения
+    if data.get("type") != "message_new":
+        return PlainTextResponse("ok")
 
-        if user_id is None:
-            print("Warning: from_id not found in object")
-            return PlainTextResponse("ok")
+    obj = data.get("object", {})
+    message = obj.get("message", {})
+    user_id = message.get("from_id")
+    text = message.get("text", "").lower() if message.get("text") else ""
 
-        conn, cur = get_db()
+    # Игнорируем служебные события или сообщения от группы
+    if user_id is None or user_id < 0:
+        print("Warning: from_id not found or message from group")
+        return PlainTextResponse("ok")
 
-        # START
-        if text in ("начать", "start"):
-            cur.execute(
-                "INSERT INTO user_progress (vk_user_id) VALUES (%s) ON CONFLICT (vk_user_id) DO NOTHING",
-                (user_id,)
-            )
-            vk_send(user_id, "Выберите предмет для подготовки:", keyboard=subject_keyboard())
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
+    print(f"[DEBUG] Пользователь {user_id} написал: {text}")
 
-        # SUBJECT SELECT
-        cur.execute("SELECT subject, exam_type, topic, level, waiting_for_answer, question FROM user_progress WHERE vk_user_id=%s", (user_id,))
-        row = cur.fetchone()
+    # Подключение к базе
+    conn, cur = get_db()
 
-        subject, exam_type, topic, level, waiting_for_answer, question = (row or (None,)*6)
+    # --- Шаг 1: Начало игры ---
+    if text in ("начать", "start"):
+        cur.execute(
+            """
+            INSERT INTO user_progress (vk_user_id, subject, level, question, last_answer, waiting_for_answer)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (vk_user_id) DO UPDATE
+            SET subject=NULL, level=NULL, question=NULL, last_answer=NULL, waiting_for_answer=FALSE
+            """,
+            (user_id, None, None, None, None, False),
+        )
+        vk_send(user_id, "Выбери предмет:", subject_keyboard())  # клавиатура с предметами
+        cur.close()
+        conn.close()
+        print(f"[DEBUG] Пользователь {user_id} начал игру. Отправляем выбор предмета.")
+        return PlainTextResponse("ok")
 
-        if subject is None and text.title() in [s.title() for s in ["Математика", "Русский язык", "Физика", "Химия", "Биология", "История", "Обществознание", "Информатика", "География", "Английский язык"]]:
-            subject = text.title()
-            cur.execute("UPDATE user_progress SET subject=%s WHERE vk_user_id=%s", (subject, user_id))
-            vk_send(user_id, "Выберите тип экзамена:", keyboard=exam_type_keyboard())
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
+    # --- Шаг 2: Выбор предмета ---
+    subjects = ["Математика", "Физика", "Химия", "Биология", "История", 
+                "Обществознание", "Русский язык", "Литература", "Английский", "Информатика"]
 
-        # EXAM TYPE SELECT
-        if subject and exam_type is None and text.upper() in ["ОГЭ", "ЕГЭ"]:
-            exam_type = text.upper()
-            cur.execute("UPDATE user_progress SET exam_type=%s WHERE vk_user_id=%s", (exam_type, user_id))
-            vk_send(user_id, f"Выберите тему по предмету {subject}:", keyboard=level_keyboard())  # можно заменить на темы конкретного предмета
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
-
-        # LEVEL SELECT и ГЕНЕРАЦИЯ ВОПРОСА (ШАГ 3)
-        if subject and exam_type and text in ["лёгкий", "средний", "сложный"]:
-            level_map = {"лёгкий": "easy", "средний": "medium", "сложный": "hard"}
-            level = level_map[text]
-
-            question = generate_question(subject, exam_type, topic or "Общие вопросы", level)
-            cur.execute(
-                "UPDATE user_progress SET level=%s, question=%s, waiting_for_answer=TRUE WHERE vk_user_id=%s",
-                (level, question, user_id)
-            )
-
-            vk_send(user_id, f"""Вопрос:
-{question}""")
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
-
-        # ПРОВЕРКА ОТВЕТА
-        if waiting_for_answer and question:
-            user_answer = text
-            result = check_answer(question, user_answer)
-            cur.execute(
-                "UPDATE user_progress SET last_answer=%s, waiting_for_answer=FALSE WHERE vk_user_id=%s",
-                (user_answer, user_id)
-            )
-            vk_send(user_id, f"{result}\nНапишите 'Начать' чтобы получить новый вопрос.")
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
-
-        # DEFAULT
-        vk_send(user_id, "Выберите действие на клавиатуре.")
+    if text.capitalize() in subjects:
+        subject = text.capitalize()
+        cur.execute(
+            "UPDATE user_progress SET subject=%s WHERE vk_user_id=%s",
+            (subject, user_id)
+        )
+        vk_send(user_id, f"Выбран предмет: {subject}. Выберите уровень сложности:", level_keyboard())
         cur.close()
         conn.close()
         return PlainTextResponse("ok")
 
+    # --- Шаг 3: Выбор уровня ---
+    levels = {"лёгкий": "easy", "средний": "medium", "сложный": "hard"}
+    if text in levels:
+        level = levels[text]
+        cur.execute(
+            "SELECT subject FROM user_progress WHERE vk_user_id=%s",
+            (user_id,)
+        )
+        subject_row = cur.fetchone()
+        subject = subject_row[0] if subject_row else "Математика"
+
+        question = generate_question(level, subject)  # Шаг 3: генерируем вопрос по предмету и уровню
+        cur.execute(
+            "UPDATE user_progress SET level=%s, question=%s, waiting_for_answer=TRUE WHERE vk_user_id=%s",
+            (level, question, user_id)
+        )
+
+        vk_send(user_id, f"Вопрос по {subject} ({text} уровень):\n{question}")
+        cur.close()
+        conn.close()
+        return PlainTextResponse("ok")
+
+    # --- Проверка ответа пользователя ---
+    cur.execute(
+        "SELECT question, waiting_for_answer, subject FROM user_progress WHERE vk_user_id=%s",
+        (user_id,)
+    )
+    row = cur.fetchone()
+    if row:
+        question_text, waiting_for_answer, subject = row
+        if waiting_for_answer:
+            # Генерируем проверку ответа через OpenAI
+            answer_feedback = check_answer(question_text, text, subject)
+            cur.execute(
+                "UPDATE user_progress SET last_answer=%s, waiting_for_answer=FALSE WHERE vk_user_id=%s",
+                (text, user_id)
+            )
+            vk_send(user_id, answer_feedback + "\n\nНапишите «Начать», чтобы получить следующий вопрос.")
+            cur.close()
+            conn.close()
+            return PlainTextResponse("ok")
+
+    # --- Для всех остальных сообщений ---
+    vk_send(user_id, "Выберите действие на клавиатуре или напишите «Начать», чтобы начать игру.", keyboard=get_main_keyboard())
+    cur.close()
+    conn.close()
     return PlainTextResponse("ok")
+
 
 @app.get("/")
 def healthcheck():
