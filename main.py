@@ -36,8 +36,8 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_progress (
             vk_user_id BIGINT PRIMARY KEY,
-            level TEXT,
             subject TEXT,
+            level TEXT,
             question TEXT,
             last_answer TEXT,
             waiting_for_answer BOOLEAN DEFAULT FALSE
@@ -47,6 +47,27 @@ def init_db():
     conn.close()
 
 init_db()
+
+# ================= OPENAI =================
+
+def generate_question(subject: str, level: str) -> str:
+    prompt = f"Придумай один вопрос по предмету '{subject}' уровня сложности '{level}' для школьника. Без ответа."
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
+def check_answer(question: str, answer: str) -> str:
+    """Проверка ответа и выдача пояснения"""
+    prompt = f"Вопрос: {question}\nОтвет пользователя: {answer}\nСкажи, правильно или нет, и объясни кратко."
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
 
 # ================= VK =================
 
@@ -58,10 +79,8 @@ def vk_send(user_id: int, text: str, keyboard: dict | None = None):
         "message": text,
         "random_id": random.randint(1, 10**9),
     }
-
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
-
     requests.post(VK_API_URL, data=payload)
 
 def level_keyboard():
@@ -75,56 +94,21 @@ def level_keyboard():
     }
 
 def subject_keyboard():
-    return {
-        "inline": True,
-        "buttons": [
-            [{"action": {"type": "text", "label": "Математика"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Русский язык"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Физика"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Химия"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Биология"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "История"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Обществознание"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "География"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Английский язык"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Информатика"}, "color": "primary"}],
-        ]
-    }
+    subjects = [
+        "Математика", "Русский язык", "Физика", "Химия", "Биология",
+        "История", "Обществознание", "География", "Английский язык", "Информатика"
+    ]
+    buttons = [[{"action": {"type": "text", "label": subj}, "color": "primary"}] for subj in subjects]
+    return {"inline": True, "buttons": buttons}
 
 def get_main_keyboard():
     return {
-        "inline": False,
+        "inline": True,
         "buttons": [
             [{"action": {"type": "text", "label": "Получить задание"}, "color": "primary"}],
-            [{"action": {"type": "text", "label": "Помощь"}, "color": "positive"}],
+            [{"action": {"type": "text", "label": "Помощь"}, "color": "secondary"}],
         ],
     }
-
-# ================= OPENAI =================
-
-def generate_question(subject: str, level: str) -> str:
-    prompt = f"Придумай вопрос по предмету '{subject}' уровня сложности '{level}' для подготовки к ОГЭ/ЕГЭ. Без ответа."
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-    )
-    return response.choices[0].message.content.strip()
-
-def check_answer(question: str, user_answer: str) -> str:
-    prompt = (
-        f"Вопрос для школьника: {question}\n"
-        f"Ответ ученика: {user_answer}\n"
-        "Определи, правильный ответ или нет. "
-        "Если неверно — объясни коротко, почему. "
-        "Ответ дай максимально понятно для школьника."
-    )
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-    )
-    return response.choices[0].message.content.strip()
 
 # ================= WEBHOOK =================
 
@@ -149,8 +133,6 @@ async def vk_webhook(request: Request):
         print(f"[DEBUG] Пользователь {user_id} написал: {text}")
 
         conn, cur = get_db()
-
-        # Проверяем, есть ли пользователь в базе
         cur.execute(
             "SELECT level, subject, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s",
             (user_id,)
@@ -164,7 +146,6 @@ async def vk_webhook(request: Request):
 
         # --- Начало игры ---
         if text in ("начать", "start") or not row:
-            # Создаём или сбрасываем запись пользователя
             cur.execute("""
                 INSERT INTO user_progress (vk_user_id, level, subject, question, waiting_for_answer)
                 VALUES (%s, %s, %s, %s, %s)
@@ -255,7 +236,6 @@ async def vk_webhook(request: Request):
 
     return PlainTextResponse("ok")
 
-# ================= HEALTHCHECK =================
 
 @app.get("/")
 def healthcheck():
