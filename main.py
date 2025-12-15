@@ -157,7 +157,8 @@ async def vk_webhook(request: Request):
 
     msg = data["object"]["message"]
     user_id = msg["from_id"]
-    text = msg["text"].strip().lower()
+    text = msg.get("text", "").strip()
+    text_lower = text.lower()
 
     print(f"[DEBUG] Пользователь {user_id} написал: {text}")
 
@@ -190,7 +191,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== НАЧАТЬ =====
-    if text == "начать":
+    if text_lower == "начать":
         # если экзамен и предмет уже выбраны — даём новый вопрос
         if row and row[0] and row[1]:
             exam, subject = row[0], row[1]
@@ -224,7 +225,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== ВЫБОР ЭКЗАМЕНА =====
-    if text.upper() in ("ОГЭ", "ЕГЭ"):
+    if text_upper := text.upper() in ("ОГЭ", "ЕГЭ"):
         cur.execute("""
         UPDATE user_progress SET exam=%s WHERE vk_user_id=%s
         """, (text.upper(), user_id))
