@@ -224,12 +224,25 @@ async def vk_webhook(request: Request):
 
     # ===== СТАТИСТИКА =====
     if text_lower == "статистика":
-        cur.execute(
-            "SELECT COUNT(*) FROM user_progress WHERE vk_user_id=%s AND waiting_for_answer=false",
-            (user_id,)
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE is_correct = true) AS correct
+            FROM user_answers
+            WHERE vk_user_id = %s
+        """, (user_id,))
+
+        total, correct = cur.fetchone()
+        incorrect = total - correct
+
+        vk_send(
+            user_id,
+            f"""📊 Ваша статистика:
+    Всего ответов: {total}
+    ✅ Правильных: {correct}
+    ❌ Неправильных: {incorrect}""",
+            get_game_keyboard()
         )
-        total = cur.fetchone()[0]
-        vk_send(user_id, f"📊 Решено вопросов: {total}", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -263,14 +276,65 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== ВЫБОР ПРЕДМЕТА =====
+    if row and row[0] and row[1] is None:
+        subject = text
+
+        # проверяем, что это реально предмет
+        valid_subjects = {
+            "ОГЭ": [
+                "Математика", "Русский язык", "Английский язык", "Физика",
+                "Химия", "Биология", "География", "История",
+                "Обществознание", "Информатика"
+            ],
+            "ЕГЭ": [
+                "Математика профиль", "Русский язык", "Английский язык", "Физика",
+                "Химия", "Биология", "География", "История",
+                "Обществознание", "Информатика"
+            ]
+        }
+
+        if subject in valid_subjects.get(row[0], []):
+            cur.execute("""
+                UPDATE user_progress
+                SET subject=%s,
+                    question=NULL,
+                    waiting_for_answer=false
+                WHERE vk_user_id=%s
+            """, (subject, user_id))
+            conn.commit()
+
+            vk_send(
+                user_id,
+                "Предмет выбран. Нажмите «Начать» для получения вопроса.",
+                get_game_keyboard()
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
     # ===== ОТВЕТ НА ВОПРОС =====
     if row and row[3] and text_lower not in COMMANDS:
         explanation = check_answer(row[2], text)
-        cur.execute(
-            "UPDATE user_progress SET waiting_for_answer=false, question=NULL WHERE vk_user_id=%s",
-            (user_id,)
+
+        is_correct = any(
+            phrase in explanation.lower()
+            for phrase in ("ответ верный", "ответ правильный", "верно")
         )
+
+        cur.execute("""
+            INSERT INTO user_answers (vk_user_id, exam, subject, is_correct)
+            VALUES (%s, %s, %s, %s)
+        """, (user_id, row[0], row[1], is_correct))
+
+        cur.execute("""
+            UPDATE user_progress
+            SET waiting_for_answer = false,
+                question = NULL
+            WHERE vk_user_id = %s
+        """, (user_id,))
+
         conn.commit()
+
         vk_send(user_id, explanation, get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
