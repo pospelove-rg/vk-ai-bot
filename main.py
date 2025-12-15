@@ -178,8 +178,8 @@ async def vk_webhook(request: Request):
                 (level, question, user_id)
             )
 
-            vk_send(user_id, f"Вопрос:
-{question}")
+            vk_send(user_id, f"""Вопрос:
+{question}""")
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
