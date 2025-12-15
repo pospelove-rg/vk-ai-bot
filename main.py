@@ -65,6 +65,22 @@ def get_main_keyboard():
         ]
     }
 
+def get_game_keyboard():
+    return {
+        "one_time": False,
+        "buttons": [
+            [
+                {"action": {"type": "text", "label": "Начать"}, "color": "primary"},
+                {"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"}
+            ],
+            [
+                {"action": {"type": "text", "label": "Сменить экзамен"}, "color": "secondary"},
+                {"action": {"type": "text", "label": "Статистика"}, "color": "secondary"}
+            ]
+        ]
+    }
+
+
 def get_exam_keyboard():
     return {
         "one_time": True,
@@ -158,7 +174,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3]:
+    if row and row[3] and text_lower not in ("начать", "стоп", "меню"):
         question = row[2]
         explanation = check_answer(question, msg["text"])
 
@@ -169,7 +185,7 @@ async def vk_webhook(request: Request):
         """, (user_id,))
         conn.commit()
 
-        vk_send(user_id, explanation, get_main_keyboard())
+        vk_send(user_id, explanation, get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -240,7 +256,7 @@ async def vk_webhook(request: Request):
         vk_send(
     user_id,
     f"Вопрос:\n{question}",
-    get_main_keyboard()
+    get_game_keyboard()
 )
         conn.close()
         return PlainTextResponse("ok")
