@@ -73,70 +73,85 @@ def check_answer(question, user_answer):
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
-    data = await request.json()
-    print("VK webhook received:", data)
-
-    obj = data.get("object", {})
-    message = obj.get("message", {})
-    user_id = message.get("from_id")
-    text = message.get("text", "").strip()
-
-    if not user_id:
-        print("Warning: from_id not found in object")
+    event = await request.json()
+    event_type = event.get("type")
+    
+    # Игнорируем системные события, которые не являются сообщениями от пользователя
+    if event_type not in ["message_new", "message_reply"]:
         return PlainTextResponse("ok")
 
-    conn = get_connection()
+    msg = event.get("object", {}).get("message", {})
+    
+    # Безопасное извлечение user_id
+    user_id = msg.get("from_id") or msg.get("peer_id")
+    if not user_id:
+        return PlainTextResponse("ok")  # если user_id не определился, игнорируем
+
+    text = msg.get("text", "").strip().lower()
+    print(f"[DEBUG] Пользователь {user_id} написал: {text}")
+
+    # Подключение к базе
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT subject, level, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
-            user_data = cur.fetchone()
+        conn = get_connection()
+        cur = conn.cursor()
+    except Exception as e:
+        print(f"[DB ERROR] {e}")
+        return PlainTextResponse("ok")
 
-            if text.lower() in ["начать", "start"]:
-                vk_send(user_id, "Выберите тип экзамена:", keyboard={
-                    "one_time": True,
-                    "buttons": [
-                        [{"action": {"type": "text", "label": "ОГЭ"}}],
-                        [{"action": {"type": "text", "label": "ЕГЭ"}}]
-                    ]
-                })
-            elif text.lower() in ["огэ", "егэ"]:
-                exam_type = text.upper()
-                cur.execute("""
-                    INSERT INTO user_progress (vk_user_id, subject, level, waiting_for_answer)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (vk_user_id) DO UPDATE 
-                    SET subject=%s, level=NULL, waiting_for_answer=FALSE
-                """, (user_id, exam_type, None, False, exam_type))
-                conn.commit()
-                vk_send(user_id, f"Выберите предмет для {exam_type}:", keyboard=get_subject_keyboard(exam_type))
-            elif user_data and user_data[0] in ["ОГЭ", "ЕГЭ"]:
-                # Пользователь выбрал предмет
-                exam_type = user_data[0]
-                subject = text.title()
-                cur.execute("""
-                    UPDATE user_progress 
-                    SET subject=%s, level='easy', waiting_for_answer=TRUE 
-                    WHERE vk_user_id=%s
-                """, (subject, user_id))
-                conn.commit()
-                question = generate_question(subject, "easy")
-                cur.execute("UPDATE user_progress SET question=%s WHERE vk_user_id=%s", (question, user_id))
-                conn.commit()
-                vk_send(user_id, f"Ваш вопрос:\n{question}")
-            elif user_data and user_data[2]:  # waiting_for_answer
-                cur.execute("SELECT question FROM user_progress WHERE vk_user_id=%s", (user_id,))
-                question = cur.fetchone()[0] or "Вопрос не найден"
-                review = check_answer(question, text)
-                vk_send(user_id, f"{review}\nНапишите 'Начать', чтобы продолжить.")
-                cur.execute("""
-                    UPDATE user_progress 
-                    SET waiting_for_answer=FALSE, last_answer=%s
-                    WHERE vk_user_id=%s
-                """, (text, user_id))
-                conn.commit()
+    # Проверяем есть ли пользователь в базе
+    cur.execute("SELECT vk_user_id, subject, level, question, waiting_for_answer FROM user_progress WHERE vk_user_id=%s", (user_id,))
+    user = cur.fetchone()
+
+    # Если пользователь новый — создаем запись
+    if not user:
+        cur.execute(
+            "INSERT INTO user_progress (vk_user_id, waiting_for_answer) VALUES (%s, %s)",
+            (user_id, False)
+        )
+        conn.commit()
+        user = (user_id, None, None, None, False)
+
+    # Основная логика
+    if text == "начать":
+        vk_send(user_id, "Выберите экзамен: ОГЭ или ЕГЭ", keyboard=get_exam_keyboard())
+        cur.execute(
+            "UPDATE user_progress SET waiting_for_answer=%s WHERE vk_user_id=%s",
+            (True, user_id)
+        )
+        conn.commit()
+    elif text in ["огэ", "егэ"] and user[4]:  # waiting_for_answer
+        exam = text.upper()
+        vk_send(user_id, f"Вы выбрали {exam}. Теперь выберите предмет.", keyboard=get_subject_keyboard(exam))
+        cur.execute(
+            "UPDATE user_progress SET subject=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
+            (exam, True, user_id)
+        )
+        conn.commit()
+    elif user[4]:  # waiting_for_answer, ожидаем выбор предмета
+        subject = text.title()
+        vk_send(user_id, f"Вы выбрали предмет {subject}. Начинаем игру!")
+        question = generate_question(subject)  # Ваша функция генерации вопросов
+        vk_send(user_id, f"Вопрос:\n{question}")
+        cur.execute(
+            "UPDATE user_progress SET question=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
+            (question, True, user_id)
+        )
+        conn.commit()
+    else:
+        # Обработка ответов на вопросы
+        if user[3]:  # question
+            correct, explanation = check_answer(user[3], text)  # Ваша функция проверки ответа
+            if correct:
+                vk_send(user_id, f"Правильно! {explanation}")
             else:
-                vk_send(user_id, "Выберите действие на клавиатуре или напишите 'Начать', чтобы начать игру.", keyboard=get_main_keyboard())
-    finally:
-        conn.close()
+                vk_send(user_id, f"Неправильно. {explanation}")
+            vk_send(user_id, "Напишите 'Начать', чтобы получить следующий вопрос или сменить предмет.")
+            cur.execute(
+                "UPDATE user_progress SET last_answer=%s, waiting_for_answer=%s WHERE vk_user_id=%s",
+                (text, False, user_id)
+            )
+            conn.commit()
 
+    cur.close()
+    conn.close()
     return PlainTextResponse("ok")
