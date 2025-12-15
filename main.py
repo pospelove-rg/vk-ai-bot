@@ -27,11 +27,11 @@ app = FastAPI()
 
 def get_connection():
     return psycopg2.connect(
-        host=dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com
-        port=5432,
-        user=vk_ai_bot_db_user,
-        password=2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC,
-        database=vk_ai_bot_db
+        host="dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com",
+        port="5432",
+        user="vk_ai_bot_db_user",
+        password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
+        database="vk_ai_bot_db"
     )
 
 # ================== VK SEND ==================
