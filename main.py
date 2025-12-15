@@ -169,7 +169,7 @@ async def vk_webhook(request: Request):
         """, (user_id,))
         conn.commit()
 
-        vk_send(user_id, explanation, get_game_keyboard())
+        vk_send(user_id, explanation, get_main_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -187,7 +187,11 @@ async def vk_webhook(request: Request):
             """, (question, user_id))
             conn.commit()
 
-            vk_send(user_id, f"Новый вопрос:\n{question}")
+            vk_send(
+    user_id,
+    f"Новый вопрос:\n{question}",
+    get_main_keyboard()
+)
             conn.close()
             return PlainTextResponse("ok")
 
@@ -235,7 +239,7 @@ async def vk_webhook(request: Request):
 
         vk_send(
     user_id,
-    f"Новый вопрос:\n{question}",
+    f"Вопрос:\n{question}",
     get_main_keyboard()
 )
         conn.close()
