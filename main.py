@@ -197,7 +197,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3] and text_lower not in ("привет", "меню", "статистика", "начать"):
+    if row and row[3]:
         question = row[2]
         explanation = check_answer(question, msg["text"])
 
