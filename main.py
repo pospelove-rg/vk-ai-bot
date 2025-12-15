@@ -186,6 +186,36 @@ async def vk_webhook(request: Request):
     )
     row = cur.fetchone()
 
+    # ===== НАЧАТЬ =====
+    if text_lower == "начать":
+        if not row:
+            cur.execute(
+                "INSERT INTO user_progress (vk_user_id) VALUES (%s)",
+                (user_id,)
+            )
+            conn.commit()
+            row = (None, None, None, False)
+
+        if not row[0]:
+            vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        if not row[1]:
+            vk_send(user_id, "Выберите предмет:", get_subject_keyboard(row[0]))
+            conn.close()
+            return PlainTextResponse("ok")
+
+        question = generate_question(row[0], row[1])
+        cur.execute(
+            "UPDATE user_progress SET question=%s, waiting_for_answer=true WHERE vk_user_id=%s",
+            (question, user_id)
+        )
+        conn.commit()
+        vk_send(user_id, f"Вопрос:\n{question}", get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
     # ===== ПРИВЕТ =====
     if text_lower in ("привет", "hello", "hi"):
         vk_send(user_id, "Привет! Я бот для подготовки к ОГЭ и ЕГЭ.", get_main_keyboard())
@@ -204,21 +234,25 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== СМЕНА ПРЕДМЕТА =====
-    if text_lower == "сменить предмет" and row and row[0]:
-        cur.execute("UPDATE user_progress SET subject=NULL WHERE vk_user_id=%s", (user_id,))
+    if row and row[0] and not row[1]:
+        cur.execute(
+            "UPDATE user_progress SET subject=%s WHERE vk_user_id=%s",
+            (text, user_id)
+        )
         conn.commit()
-        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(row[0]))
+        vk_send(user_id, "Нажмите «Начать» для получения вопроса", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
+
     # ===== СМЕНА ЭКЗАМЕНА =====
-    if text_lower == "сменить экзамен":
+    if text_upper in ("ОГЭ", "ЕГЭ"):
         cur.execute(
-            "UPDATE user_progress SET exam=NULL, subject=NULL WHERE vk_user_id=%s",
-            (user_id,)
+            "UPDATE user_progress SET exam=%s, subject=NULL WHERE vk_user_id=%s",
+            (text_upper, user_id)
         )
         conn.commit()
-        vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+        vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text_upper))
         conn.close()
         return PlainTextResponse("ok")
 
