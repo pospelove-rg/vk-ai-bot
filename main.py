@@ -37,6 +37,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS user_progress (
             vk_user_id BIGINT PRIMARY KEY,
             subject TEXT,
+            exam_type TEXT,
+            topic TEXT,
             level TEXT,
             question TEXT,
             last_answer TEXT,
@@ -50,26 +52,26 @@ init_db()
 
 # ================= OPENAI =================
 
-def generate_question(subject: str, level: str) -> str:
-    prompt = f"Придумай один вопрос по предмету '{subject}' уровня сложности '{level}' для школьника. Без ответа."
+def generate_question(subject: str, exam_type: str, topic: str, level: str) -> str:
+    prompt = f"Придумай один вопрос по предмету {subject}, для экзамена {exam_type}, тему {topic}, уровень сложности {level}. Без ответа."
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
+
     return response.choices[0].message.content.strip()
 
 def check_answer(question: str, user_answer: str) -> str:
-    prompt = (
-        f"Вопрос: {question}\n"
-        f"Ответ пользователя: {user_answer}\n"
-        "Проверь, правильный ли ответ, и если нет, объясни коротко правильный."
-    )
+    prompt = f"Проверь правильность ответа: Вопрос: {question}. Ответ пользователя: {user_answer}. Объясни правильно или нет."
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0,
+        temperature=0.7,
     )
+
     return response.choices[0].message.content.strip()
 
 # ================= VK =================
@@ -82,27 +84,33 @@ def vk_send(user_id: int, text: str, keyboard: dict | None = None):
         "message": text,
         "random_id": random.randint(1, 10**9),
     }
+
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
+
     requests.post(VK_API_URL, data=payload)
+
+# ================= KEYBOARDS =================
+
+def subject_keyboard():
+    subjects = ["Математика", "Русский язык", "Физика", "Химия", "Биология", "История", "Обществознание", "Информатика", "География", "Английский язык"]
+    buttons = [[{"action": {"type": "text", "label": subj}, "color": "primary"}] for subj in subjects]
+    return {"inline": True, "buttons": buttons}
+
+def exam_type_keyboard():
+    exams = ["ОГЭ", "ЕГЭ"]
+    buttons = [[{"action": {"type": "text", "label": ex}, "color": "primary"}] for ex in exams]
+    return {"inline": True, "buttons": buttons}
 
 def level_keyboard():
     return {
-        "one_time": True,
+        "inline": True,
         "buttons": [
             [{"action": {"type": "text", "label": "Лёгкий"}, "color": "positive"}],
             [{"action": {"type": "text", "label": "Средний"}, "color": "primary"}],
             [{"action": {"type": "text", "label": "Сложный"}, "color": "negative"}],
         ],
     }
-
-def subject_keyboard():
-    subjects = [
-        "Математика", "Русский язык", "Физика", "Химия", "Биология",
-        "История", "Обществознание", "География", "Английский язык", "Информатика"
-    ]
-    buttons = [[{"action": {"type": "text", "label": subj}, "color": "primary"}] for subj in subjects]
-    return {"one_time": True, "buttons": buttons}
 
 # ================= WEBHOOK =================
 
@@ -111,90 +119,91 @@ async def vk_webhook(request: Request):
     data = await request.json()
     print("VK webhook received:", data)
 
-    # Подтверждение сервера
     if data.get("type") == "confirmation":
         return PlainTextResponse(VK_CONFIRMATION_CODE)
 
-    # Обработка новых сообщений
     if data.get("type") == "message_new":
         obj = data.get("object", {})
         user_id = obj.get("from_id")
-        text = obj.get("message", {}).get("text", "").lower()
+        text = obj.get("text", "").lower()
 
-        if not user_id:
+        if user_id is None:
             print("Warning: from_id not found in object")
             return PlainTextResponse("ok")
 
         conn, cur = get_db()
-        cur.execute("SELECT * FROM user_progress WHERE vk_user_id=%s", (user_id,))
-        user = cur.fetchone()
 
-        # Начало игры
+        # START
         if text in ("начать", "start"):
-            if not user:
-                cur.execute(
-                    "INSERT INTO user_progress (vk_user_id) VALUES (%s)",
-                    (user_id,)
-                )
-            else:
-                cur.execute(
-                    "UPDATE user_progress SET subject=NULL, level=NULL, question=NULL, waiting_for_answer=FALSE WHERE vk_user_id=%s",
-                    (user_id,)
-                )
-            vk_send(user_id, "Выберите предмет:", keyboard=subject_keyboard())
-            cur.close()
-            conn.close()
-            return PlainTextResponse("ok")
-
-        # Выбор предмета
-        subjects = [
-            "математика", "русский язык", "физика", "химия", "биология",
-            "история", "обществознание", "география", "английский язык", "информатика"
-        ]
-        if text in subjects:
             cur.execute(
-                "UPDATE user_progress SET subject=%s WHERE vk_user_id=%s",
-                (text.title(), user_id)
+                "INSERT INTO user_progress (vk_user_id) VALUES (%s) ON CONFLICT (vk_user_id) DO NOTHING",
+                (user_id,)
             )
-            vk_send(user_id, "Выберите уровень сложности:", keyboard=level_keyboard())
+            vk_send(user_id, "Выберите предмет для подготовки:", keyboard=subject_keyboard())
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
 
-        # Выбор уровня
-        levels = {"лёгкий": "easy", "средний": "medium", "сложный": "hard"}
-        if text in levels:
-            cur.execute("SELECT subject FROM user_progress WHERE vk_user_id=%s", (user_id,))
-            subject = cur.fetchone()[0]
-            question = generate_question(subject, levels[text])
+        # SUBJECT SELECT
+        cur.execute("SELECT subject, exam_type, topic, level, waiting_for_answer, question FROM user_progress WHERE vk_user_id=%s", (user_id,))
+        row = cur.fetchone()
+
+        subject, exam_type, topic, level, waiting_for_answer, question = (row or (None,)*6)
+
+        if subject is None and text.title() in [s.title() for s in ["Математика", "Русский язык", "Физика", "Химия", "Биология", "История", "Обществознание", "Информатика", "География", "Английский язык"]]:
+            subject = text.title()
+            cur.execute("UPDATE user_progress SET subject=%s WHERE vk_user_id=%s", (subject, user_id))
+            vk_send(user_id, "Выберите тип экзамена:", keyboard=exam_type_keyboard())
+            cur.close()
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # EXAM TYPE SELECT
+        if subject and exam_type is None and text.upper() in ["ОГЭ", "ЕГЭ"]:
+            exam_type = text.upper()
+            cur.execute("UPDATE user_progress SET exam_type=%s WHERE vk_user_id=%s", (exam_type, user_id))
+            vk_send(user_id, f"Выберите тему по предмету {subject}:", keyboard=level_keyboard())  # можно заменить на темы конкретного предмета
+            cur.close()
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # LEVEL SELECT и ГЕНЕРАЦИЯ ВОПРОСА (ШАГ 3)
+        if subject and exam_type and text in ["лёгкий", "средний", "сложный"]:
+            level_map = {"лёгкий": "easy", "средний": "medium", "сложный": "hard"}
+            level = level_map[text]
+
+            question = generate_question(subject, exam_type, topic or "Общие вопросы", level)
             cur.execute(
                 "UPDATE user_progress SET level=%s, question=%s, waiting_for_answer=TRUE WHERE vk_user_id=%s",
-                (levels[text], question, user_id)
+                (level, question, user_id)
             )
-            vk_send(user_id, f"Вопрос:\n{question}")
+
+            vk_send(user_id, f"Вопрос:
+{question}")
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
 
-        # Проверка ответа
-        if user and user[5]:  # waiting_for_answer == True
-            cur.execute("SELECT question FROM user_progress WHERE vk_user_id=%s", (user_id,))
-            question_text = cur.fetchone()[0]
-            result = check_answer(question_text, text)
-            vk_send(user_id, f"{result}\n\nНапишите 'Начать', чтобы получить новый вопрос.")
-            cur.execute("UPDATE user_progress SET last_answer=%s, waiting_for_answer=FALSE WHERE vk_user_id=%s", (text, user_id))
+        # ПРОВЕРКА ОТВЕТА
+        if waiting_for_answer and question:
+            user_answer = text
+            result = check_answer(question, user_answer)
+            cur.execute(
+                "UPDATE user_progress SET last_answer=%s, waiting_for_answer=FALSE WHERE vk_user_id=%s",
+                (user_answer, user_id)
+            )
+            vk_send(user_id, f"{result}\nНапишите 'Начать' чтобы получить новый вопрос.")
             cur.close()
             conn.close()
             return PlainTextResponse("ok")
 
-        # По умолчанию
-        vk_send(user_id, "Напишите «Начать», чтобы начать игру.")
+        # DEFAULT
+        vk_send(user_id, "Выберите действие на клавиатуре.")
         cur.close()
         conn.close()
         return PlainTextResponse("ok")
 
     return PlainTextResponse("ok")
-
 
 @app.get("/")
 def healthcheck():
