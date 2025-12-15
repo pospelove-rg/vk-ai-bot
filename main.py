@@ -158,7 +158,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== НАЧАТЬ =====
-    if text == "начать":
+if text == "начать":
     # если экзамен и предмет уже выбраны — даём новый вопрос
     if row and row[0] and row[1]:
         exam, subject = row[0], row[1]
