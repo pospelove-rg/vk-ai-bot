@@ -83,12 +83,13 @@ def get_game_keyboard():
 
 def get_exam_keyboard():
     return {
-        "one_time": True,
+        "one_time": False,
         "buttons": [
             [{"action": {"type": "text", "label": "ОГЭ"}, "color": "primary"}],
             [{"action": {"type": "text", "label": "ЕГЭ"}, "color": "primary"}]
         ]
     }
+
 
 def get_subject_keyboard(exam: str):
     subjects = {
@@ -105,10 +106,15 @@ def get_subject_keyboard(exam: str):
     }
 
     buttons = []
-    for s in subjects[exam]:
-        buttons.append([{"action": {"type": "text", "label": s}, "color": "secondary"}])
+    for s in subjects.get(exam, []):
+        buttons.append([
+            {"action": {"type": "text", "label": s}, "color": "secondary"}
+        ])
 
-    return {"one_time": True, "buttons": buttons}
+    return {
+        "one_time": False,
+        "buttons": buttons
+    }
 
 # ================== OPENAI ==================
 
@@ -159,7 +165,7 @@ async def vk_webhook(request: Request):
     user_id = msg["from_id"]
     text = msg.get("text", "").strip()
     text_lower = text.lower()
-
+    text_upper = text.upper()
     print(f"[DEBUG] Пользователь {user_id} написал: {text}")
 
     conn = get_connection()
@@ -169,7 +175,7 @@ async def vk_webhook(request: Request):
     row = cur.fetchone()
 
     # ===== ПРИВЕТ =====
-    if text in ("привет", "hello", "hi"):
+    if text_lower in ("привет", "hello", "hi"):
         vk_send(user_id, "Привет! Я бот для подготовки к ОГЭ и ЕГЭ.", get_main_keyboard())
         conn.close()
         return PlainTextResponse("ok")
@@ -190,6 +196,21 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== ОТВЕТ НА ВОПРОС =====
+    if row and row[3] and text_lower not in ("привет", "меню", "статистика", "начать"):
+        question = row[2]
+        explanation = check_answer(question, msg["text"])
+
+        cur.execute("""
+        UPDATE user_progress
+        SET waiting_for_answer=false, question=NULL
+        WHERE vk_user_id=%s
+        """, (user_id,))
+        conn.commit()
+
+        vk_send(user_id, explanation, get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
 
     # ===== НАЧАТЬ =====
     if text_lower == "начать":
@@ -208,7 +229,7 @@ async def vk_webhook(request: Request):
             vk_send(
     user_id,
     f"Новый вопрос:\n{question}",
-    get_main_keyboard()
+    get_game_keyboard()
 )
             conn.close()
             return PlainTextResponse("ok")
@@ -226,10 +247,10 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== ВЫБОР ЭКЗАМЕНА =====
-    if text_upper := text.upper() in ("ОГЭ", "ЕГЭ"):
+    if text_upper in ("ОГЭ", "ЕГЭ"):
         cur.execute("""
         UPDATE user_progress SET exam=%s WHERE vk_user_id=%s
-        """, (text.upper(), user_id))
+        """, (text_upper, user_id))
         conn.commit()
 
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text.upper()))
@@ -263,22 +284,7 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== ОТВЕТ НА ВОПРОС =====
-    if row and row[3] and text_lower not in ("привет", "меню", "статистика", "начать"):
-        question = row[2]
-        explanation = check_answer(question, msg["text"])
-
-        cur.execute("""
-        UPDATE user_progress
-        SET waiting_for_answer=false, question=NULL
-        WHERE vk_user_id=%s
-        """, (user_id,))
-        conn.commit()
-
-        vk_send(user_id, explanation, get_game_keyboard())
-        conn.close()
-        return PlainTextResponse("ok")
-
+    
     # ===== ПО УМОЛЧАНИЮ =====
     vk_send(user_id, "Используйте кнопки или напишите «Начать».", get_main_keyboard())
     conn.close()
