@@ -37,6 +37,7 @@ SUBJECTS = {
 # Набор команд, которые НЕ должны считаться ответом
 BASE_COMMANDS = {
     "начать",
+    "знайка",
     "статистика",
     "сменить предмет",
     "сменить экзамен",
@@ -102,7 +103,7 @@ def get_game_keyboard():
         "one_time": False,
         "buttons": [
             [
-                {"action": {"type": "text", "label": "Начать"}, "color": "primary"},
+                {"action": {"type": "text", "label": "Знайка"}, "color": "primary"},
                 {"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"},
             ],
             [
@@ -253,7 +254,7 @@ async def vk_webhook(request: Request):
             "Как работать со мной:\n"
             "1️⃣ Выбери экзамен и предмет\n"
             "2️⃣ Укажи сложность и тип задания\n"
-            "3️⃣ Нажми «Начать» — получишь вопрос\n"
+            "3️⃣ Нажми «Знайка» — получишь вопрос\n"
             "4️⃣ Отвечай текстом или буквой (в тестах)\n\n"
             "В любой момент можно сменить предмет или экзамен кнопками ниже.",
             get_main_keyboard()
@@ -380,12 +381,12 @@ async def vk_webhook(request: Request):
         """, (chosen, user_id))
         conn.commit()
 
-        vk_send(user_id, "Настройки сохранены. Нажмите «Начать» для получения вопроса.", get_game_keyboard())
+        vk_send(user_id, "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
     # ===== 9) НАЧАТЬ =====
-    if text_lower == "начать":
+    if text_lower in ("начать", "знайка"):
         # если ждём ответ — НЕ генерируем новый вопрос
         if waiting and question:
             vk_send(user_id, "Сначала ответьте на текущий вопрос.", get_game_keyboard())
