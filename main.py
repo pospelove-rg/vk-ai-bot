@@ -386,7 +386,7 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== 9) НАЧАТЬ =====
-    if text_lower in ("начать", "знайка"):
+    if text_lower == "начать":
         # если ждём ответ — НЕ генерируем новый вопрос
         if waiting and question:
             vk_send(user_id, "Сначала ответьте на текущий вопрос.", get_game_keyboard())
@@ -444,6 +444,47 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
+    # ===== 9.1) ЗНАЙКА — СРАЗУ ВОПРОС =====
+    if text_lower == "знайка":
+        if waiting and question:
+            vk_send(user_id, "Сначала ответьте на текущий вопрос.", get_game_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        if not exam:
+            vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        if not subject:
+            vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
+            conn.close()
+            return PlainTextResponse("ok")
+
+        if not difficulty:
+            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        if not task_type:
+            vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
+        new_q = generate_question(exam, subject, difficulty, task_type)
+
+        cur.execute("""
+            UPDATE user_progress
+            SET question=%s, waiting_for_answer=true
+            WHERE vk_user_id=%s
+        """, (new_q, user_id))
+        conn.commit()
+
+        vk_send(user_id, f"🧠 Вопрос от «Знайки»:\n{new_q}", get_game_keyboard())
+        conn.close()
+        return PlainTextResponse("ok")
+
     # ===== 10) ОТВЕТ НА ВОПРОС =====
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
@@ -483,7 +524,7 @@ async def vk_webhook(request: Request):
     elif not task_type:
         vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
     else:
-        vk_send(user_id, "Нажмите «Начать», чтобы получить вопрос.", get_game_keyboard())
+        vk_send(user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard())
 
     conn.close()
     return PlainTextResponse("ok")
