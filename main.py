@@ -148,6 +148,14 @@ def get_task_type_keyboard():
         ]
     }
 
+def format_settings(exam, subject, difficulty, task_type):
+    return (
+        f"📌 Текущие настройки:\n"
+        f"Экзамен: {exam}\n"
+        f"Предмет: {subject}\n"
+        f"Сложность: {difficulty}\n"
+        f"Тип задания: {task_type}"
+    )
 # ================== OPENAI ==================
 
 def generate_question(exam: str, subject: str, difficulty: str, task_type: str) -> str:
@@ -168,7 +176,7 @@ def generate_question(exam: str, subject: str, difficulty: str, task_type: str) 
     )
     return r.choices[0].message.content.strip()
 
-def check_answer(question: str, user_answer: str) -> str:
+def check_answer(question: str, user_answer: str):
     prompt = f"""
 Вопрос:
 {question}
@@ -176,10 +184,9 @@ def check_answer(question: str, user_answer: str) -> str:
 Ответ ученика:
 {user_answer}
 
-Оцени ответ.
-1) Скажи: "Верно" или "Неверно".
-2) Если неверно — кратко объясни правильно.
-3) Если верно — кратко похвали и дополни одним советом.
+Ответь строго в формате:
+RESULT: CORRECT или RESULT: WRONG
+EXPLANATION: краткое объяснение (2–4 предложения)
 """
     r = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -240,13 +247,44 @@ async def vk_webhook(request: Request):
 
     # ===== 1) ПРИВЕТ (всегда раньше всего, чтобы "привет" не считался ответом) =====
     if text_lower in ("привет", "hello", "hi"):
-        vk_send(user_id, "Привет! Я бот для подготовки к ОГЭ и ЕГЭ.", get_main_keyboard())
+        vk_send(
+            user_id,
+            "Привет! 👋 Я бот для подготовки к ОГЭ и ЕГЭ.\n\n"
+            "Как работать со мной:\n"
+            "1️⃣ Выбери экзамен и предмет\n"
+            "2️⃣ Укажи сложность и тип задания\n"
+            "3️⃣ Нажми «Начать» — получишь вопрос\n"
+            "4️⃣ Отвечай текстом или буквой (в тестах)\n\n"
+            "В любой момент можно сменить предмет или экзамен кнопками ниже.",
+            get_main_keyboard()
+        )
         conn.close()
         return PlainTextResponse("ok")
 
     # ===== 2) СТАТИСТИКА =====
     if text_lower == "статистика":
-        vk_send(user_id, f"📊 Решено вопросов: {solved_count}", get_game_keyboard() if exam else get_main_keyboard())
+        cur.execute("""
+            SELECT 
+                COALESCE(attempts_count, 0),
+                COALESCE(correct_count, 0)
+            FROM user_progress
+            WHERE vk_user_id = %s
+        """, (user_id,))
+
+        row_stats = cur.fetchone()
+        attempts, correct = row_stats if row_stats else (0, 0)
+
+        vk_send(
+            user_id,
+            (
+                "📊 Ваша статистика:\n"
+                f"Всего попыток: {attempts}\n"
+                f"Правильных ответов: {correct}\n"
+                f"Точность: {round((correct / attempts) * 100, 1) if attempts else 0}%"
+            ),
+            get_game_keyboard()
+        )
+
         conn.close()
         return PlainTextResponse("ok")
 
@@ -374,6 +412,24 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
+        # ===== ПОКАЗ НАСТРОЕК ПЕРЕД СТАРТОМ =====
+        if not waiting and not question:
+            vk_send(
+                user_id,
+                (
+                    f"📘 Текущие настройки:\n"
+                    f"Экзамен: {exam}\n"
+                    f"Предмет: {subject}\n"
+                    f"Сложность: {difficulty}\n"
+                    f"Тип задания: {task_type}\n\n"
+                    f"Нажмите «Начать», чтобы получить вопрос,\n"
+                    f"или используйте кнопки ниже для изменения."
+                ),
+                get_game_keyboard()
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
         new_q = generate_question(exam, subject, difficulty, task_type)
 
         cur.execute("""
@@ -390,21 +446,29 @@ async def vk_webhook(request: Request):
     # ===== 10) ОТВЕТ НА ВОПРОС =====
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
-        explanation = check_answer(question, text)
+        result_text = check_answer(question, text)
+
+        is_correct = "RESULT: CORRECT" in result_text
 
         cur.execute("""
             UPDATE user_progress
-            SET waiting_for_answer=false,
+            SET
+                waiting_for_answer=false,
                 question=NULL,
-                solved_count = COALESCE(solved_count, 0) + 1
+                attempts_count = attempts_count + 1,
+                correct_count = correct_count + %s
             WHERE vk_user_id=%s
-        """, (user_id,))
+        """, (1 if is_correct else 0, user_id))
         conn.commit()
 
-        vk_send(user_id, explanation, get_game_keyboard())
+        vk_send(
+            user_id,
+            result_text.replace("RESULT: CORRECT", "✅ Верно")
+                       .replace("RESULT: WRONG", "❌ Неверно"),
+            get_game_keyboard()
+        )
         conn.close()
         return PlainTextResponse("ok")
-
     # ===== 11) ПО УМОЛЧАНИЮ =====
     # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
     if waiting and question:
