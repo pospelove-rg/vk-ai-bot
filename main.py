@@ -44,6 +44,12 @@ BASE_COMMANDS = {
     "меню",
 }
 
+# Минимальная длина ответа для заданий с развернутым решением
+MIN_LEN_BY_TYPE = {
+    "Практика": 40,
+    "Развёрнутый ответ": 80,
+}
+
 # ================== DB ==================
 
 def get_connection():
@@ -177,13 +183,23 @@ def generate_question(exam: str, subject: str, difficulty: str, task_type: str) 
     )
     return r.choices[0].message.content.strip()
 
-def check_answer(question: str, user_answer: str):
+def check_answer(question: str, user_answer: str, task_type: str):
     prompt = f"""
+Ты строгий экзаменатор.
+
+Тип задания: {task_type}
+
 Вопрос:
 {question}
 
 Ответ ученика:
 {user_answer}
+
+Правила проверки:
+- Если ответ слишком короткий или формальный — RESULT: WRONG
+- Если отсутствуют формулы, законы, рассуждения (для практики) — RESULT: WRONG
+- НЕ додумывай ответ за ученика
+- Засчитывай ТОЛЬКО если ответ явно демонстрирует понимание
 
 Ответь строго в формате:
 RESULT: CORRECT или RESULT: WRONG
@@ -488,7 +504,36 @@ async def vk_webhook(request: Request):
     # ===== 10) ОТВЕТ НА ВОПРОС =====
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
-        result_text = check_answer(question, text)
+
+        # --- 10.1 Проверка на отписку ---
+        if text_lower in {
+            "сложно", "не знаю", "хз", "без понятия",
+            "не понял", "не могу", "не знаю ответ"
+        }:
+            vk_send(
+                user_id,
+                "❌ Такой ответ не может быть засчитан.\n"
+                "Попробуйте описать решение или рассуждения.",
+                get_game_keyboard()
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # --- 10.2 Проверка минимальной длины ---
+        min_len = MIN_LEN_BY_TYPE.get(task_type)
+
+        if min_len and len(text.strip()) < min_len:
+            vk_send(
+                user_id,
+                f"❌ Ответ слишком короткий для задания типа «{task_type}».\n"
+                f"Пожалуйста, опишите решение подробнее.",
+                get_game_keyboard()
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # --- 10.3 Проверка через AI ---
+        result_text = check_answer(question, text, task_type)
 
         is_correct = "RESULT: CORRECT" in result_text
 
@@ -511,6 +556,7 @@ async def vk_webhook(request: Request):
         )
         conn.close()
         return PlainTextResponse("ok")
+
     # ===== 11) ПО УМОЛЧАНИЮ =====
     # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
     if waiting and question:
