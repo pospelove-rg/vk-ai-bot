@@ -23,15 +23,29 @@ TASK_TYPES = ["Теория", "Практика", "Тест", "Развёрну�
 
 SUBJECTS = {
     "ОГЭ": [
-        "Математика", "Русский язык", "Английский язык", "Физика",
-        "Химия", "Биология", "География", "История",
-        "Обществознание", "Информатика"
+        "Математика",
+        "Русский язык",
+        "Английский язык",
+        "Физика",
+        "Химия",
+        "Биология",
+        "География",
+        "История",
+        "Обществознание",
+        "Информатика",
     ],
     "ЕГЭ": [
-        "Математика профиль", "Русский язык", "Английский язык", "Физика",
-        "Химия", "Биология", "География", "История",
-        "Обществознание", "Информатика"
-    ]
+        "Математика профиль",
+        "Русский язык",
+        "Английский язык",
+        "Физика",
+        "Химия",
+        "Биология",
+        "География",
+        "История",
+        "Обществознание",
+        "Информатика",
+    ],
 }
 
 # Набор команд, которые НЕ должны считаться ответом
@@ -52,6 +66,7 @@ MIN_LEN_BY_TYPE = {
 
 # ================== DB ==================
 
+
 def get_connection():
     # Рекомендация: вынести в env, но оставляю как у тебя (чтобы "ничего не потерять").
     return psycopg2.connect(
@@ -59,18 +74,24 @@ def get_connection():
         port="5432",
         user="vk_ai_bot_db_user",
         password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
-        database="vk_ai_bot_db"
+        database="vk_ai_bot_db",
     )
 
+
 def ensure_user_row(cur, user_id: int):
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO user_progress (vk_user_id)
         VALUES (%s)
         ON CONFLICT (vk_user_id) DO NOTHING
-    """, (user_id,))
+    """,
+        (user_id,),
+    )
+
 
 def get_user_row(cur, user_id: int):
-    cur.execute("""
+    cur.execute(
+        """
         SELECT
             exam,
             subject,
@@ -85,10 +106,14 @@ def get_user_row(cur, user_id: int):
             correct_count
         FROM user_progress
         WHERE vk_user_id=%s
-    """, (user_id,))
+    """,
+        (user_id,),
+    )
     return cur.fetchone()
 
+
 # ================== VK SEND ==================
+
 
 def vk_send(user_id: int, message: str, keyboard: dict | None = None):
     payload = {
@@ -96,7 +121,7 @@ def vk_send(user_id: int, message: str, keyboard: dict | None = None):
         "message": message,
         "random_id": random.randint(1, 2_000_000_000),
         "access_token": VK_TOKEN,
-        "v": "5.131"
+        "v": "5.131",
     }
     if keyboard:
         payload["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
@@ -104,7 +129,9 @@ def vk_send(user_id: int, message: str, keyboard: dict | None = None):
     requests.post("https://api.vk.com/method/messages.send", data=payload, timeout=15)
     print(f"[VK_SEND] to {user_id}: {message}")
 
+
 # ================== KEYBOARDS ==================
+
 
 def get_main_keyboard():
     return {
@@ -112,8 +139,9 @@ def get_main_keyboard():
         "buttons": [
             [{"action": {"type": "text", "label": "Начать"}, "color": "primary"}],
             [{"action": {"type": "text", "label": "Статистика"}, "color": "secondary"}],
-        ]
+        ],
     }
+
 
 def get_game_keyboard():
     return {
@@ -121,14 +149,24 @@ def get_game_keyboard():
         "buttons": [
             [
                 {"action": {"type": "text", "label": "Знайка"}, "color": "primary"},
-                {"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"},
+                {
+                    "action": {"type": "text", "label": "Сменить предмет"},
+                    "color": "secondary",
+                },
             ],
             [
-                {"action": {"type": "text", "label": "Сменить экзамен"}, "color": "secondary"},
-                {"action": {"type": "text", "label": "Статистика"}, "color": "secondary"},
-            ]
-        ]
+                {
+                    "action": {"type": "text", "label": "Сменить экзамен"},
+                    "color": "secondary",
+                },
+                {
+                    "action": {"type": "text", "label": "Статистика"},
+                    "color": "secondary",
+                },
+            ],
+        ],
     }
+
 
 def get_exam_keyboard():
     return {
@@ -136,8 +174,9 @@ def get_exam_keyboard():
         "buttons": [
             [{"action": {"type": "text", "label": "ОГЭ"}, "color": "primary"}],
             [{"action": {"type": "text", "label": "ЕГЭ"}, "color": "primary"}],
-        ]
+        ],
     }
+
 
 def get_subject_keyboard(exam: str):
     return {
@@ -145,8 +184,9 @@ def get_subject_keyboard(exam: str):
         "buttons": [
             [{"action": {"type": "text", "label": s}, "color": "secondary"}]
             for s in SUBJECTS.get(exam, [])
-        ]
+        ],
     }
+
 
 def get_difficulty_keyboard():
     return {
@@ -154,8 +194,9 @@ def get_difficulty_keyboard():
         "buttons": [
             [{"action": {"type": "text", "label": d}, "color": "secondary"}]
             for d in DIFFICULTIES
-        ]
+        ],
     }
+
 
 def get_task_type_keyboard():
     return {
@@ -163,8 +204,9 @@ def get_task_type_keyboard():
         "buttons": [
             [{"action": {"type": "text", "label": t}, "color": "secondary"}]
             for t in TASK_TYPES
-        ]
+        ],
     }
+
 
 def format_settings(exam, subject, difficulty, task_type):
     return (
@@ -174,7 +216,10 @@ def format_settings(exam, subject, difficulty, task_type):
         f"Сложность: {difficulty}\n"
         f"Тип задания: {task_type}"
     )
+
+
 # ================== OPENAI ==================
+
 
 def generate_question(exam: str, subject: str, difficulty: str, task_type: str) -> str:
     prompt = f"""
@@ -189,10 +234,10 @@ def generate_question(exam: str, subject: str, difficulty: str, task_type: str) 
 Не пиши "Вопрос:" — только текст задания.
 """
     r = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}]
     )
     return r.choices[0].message.content.strip()
+
 
 def check_answer(question: str, user_answer: str, task_type: str):
     prompt = f"""
@@ -217,12 +262,13 @@ RESULT: CORRECT или RESULT: WRONG
 EXPLANATION: краткое объяснение (2–4 предложения)
 """
     r = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}]
     )
     return r.choices[0].message.content.strip()
 
+
 # ================== QUESTION SOURCE ==================
+
 
 def choose_source(task_type: str, difficulty: str) -> str:
     # Тесты всегда локальные (экономим AI)
@@ -241,7 +287,8 @@ def get_question(exam, subject, difficulty, task_type, cur):
 
     # 1️⃣ Пробуем локальный банк
     if source == "local":
-        cur.execute("""
+        cur.execute(
+            """
             SELECT id, question_text
             FROM questions
             WHERE exam=%s
@@ -251,14 +298,12 @@ def get_question(exam, subject, difficulty, task_type, cur):
               AND source='local'
             ORDER BY RANDOM()
             LIMIT 1
-        """, (exam, subject, difficulty, task_type))
+        """,
+            (exam, subject, difficulty, task_type),
+        )
         row = cur.fetchone()
         if row:
-            return {
-                "id": row[0],
-                "text": row[1],
-                "source": "local"
-            }
+            return {"id": row[0], "text": row[1], "source": "local"}
 
         # fallback на AI
         source = "ai"
@@ -266,26 +311,29 @@ def get_question(exam, subject, difficulty, task_type, cur):
     # 2️⃣ AI-вопрос
     text = generate_question(exam, subject, difficulty, task_type)
 
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO questions (exam, subject, difficulty, task_type, question_text, source)
         VALUES (%s,%s,%s,%s,%s,'ai')
         RETURNING id
-    """, (exam, subject, difficulty, task_type, text))
+    """,
+        (exam, subject, difficulty, task_type, text),
+    )
     qid = cur.fetchone()[0]
 
-    return {
-        "id": qid,
-        "text": text,
-        "source": "ai"
-    }
+    return {"id": qid, "text": text, "source": "ai"}
+
 
 # ================== HELPERS ==================
+
 
 def normalize(text: str) -> str:
     return (text or "").strip()
 
+
 def normalize_lower(text: str) -> str:
     return normalize(text).lower()
+
 
 def is_command(text_lower: str) -> bool:
     # команды + уровни/типы тоже не "ответ"
@@ -299,7 +347,9 @@ def is_command(text_lower: str) -> bool:
         return True
     return False
 
+
 # ================== WEBHOOK ==================
+
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
@@ -339,9 +389,8 @@ async def vk_webhook(request: Request):
         current_qid,
         current_source,
         attempts_count,
-        correct_count
+        correct_count,
     ) = row
-
 
     # ===== 1) ПРИВЕТ (всегда раньше всего, чтобы "привет" не считался ответом) =====
     if text_lower in ("привет", "hello", "hi"):
@@ -354,20 +403,23 @@ async def vk_webhook(request: Request):
             "3️⃣ Нажми «Знайка» — получишь вопрос\n"
             "4️⃣ Отвечай текстом или буквой (в тестах)\n\n"
             "В любой момент можно сменить предмет или экзамен кнопками ниже.",
-            get_main_keyboard()
+            get_main_keyboard(),
         )
         conn.close()
         return PlainTextResponse("ok")
 
     # ===== 2) СТАТИСТИКА =====
     if text_lower == "статистика":
-        cur.execute("""
+        cur.execute(
+            """
             SELECT 
                 COALESCE(attempts_count, 0),
                 COALESCE(correct_count, 0)
             FROM user_progress
             WHERE vk_user_id = %s
-        """, (user_id,))
+        """,
+            (user_id,),
+        )
 
         row_stats = cur.fetchone()
         attempts, correct = row_stats if row_stats else (0, 0)
@@ -380,7 +432,7 @@ async def vk_webhook(request: Request):
                 f"Правильных ответов: {correct}\n"
                 f"Точность: {round((correct / attempts) * 100, 1) if attempts else 0}%"
             ),
-            get_game_keyboard()
+            get_game_keyboard(),
         )
 
         conn.close()
@@ -388,12 +440,15 @@ async def vk_webhook(request: Request):
 
     # ===== 3) СМЕНА ЭКЗАМЕНА =====
     if text_lower == "сменить экзамен":
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET exam=NULL, subject=NULL, difficulty=NULL, task_type=NULL,
                 question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (user_id,))
+        """,
+            (user_id,),
+        )
         conn.commit()
         vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
         conn.close()
@@ -406,12 +461,15 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET subject=NULL, difficulty=NULL, task_type=NULL,
                 question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (user_id,))
+        """,
+            (user_id,),
+        )
         conn.commit()
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
         conn.close()
@@ -419,12 +477,15 @@ async def vk_webhook(request: Request):
 
     # ===== 5) ВЫБОР ЭКЗАМЕНА =====
     if text_upper in ("ОГЭ", "ЕГЭ"):
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET exam=%s, subject=NULL, difficulty=NULL, task_type=NULL,
                 question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (text_upper, user_id))
+        """,
+            (text_upper, user_id),
+        )
         conn.commit()
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text_upper))
         conn.close()
@@ -438,12 +499,15 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET subject=%s, difficulty=NULL, task_type=NULL,
                 question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (text, user_id))
+        """,
+            (text, user_id),
+        )
         conn.commit()
 
         vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
@@ -451,16 +515,24 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== 7) ВЫБОР СЛОЖНОСТИ =====
-    if exam and subject and not difficulty and text_lower in {d.lower() for d in DIFFICULTIES}:
+    if (
+        exam
+        and subject
+        and not difficulty
+        and text_lower in {d.lower() for d in DIFFICULTIES}
+    ):
         # сохраняем каноническое значение (с заглавной)
         chosen = next(d for d in DIFFICULTIES if d.lower() == text_lower)
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET difficulty=%s, task_type=NULL,
                 question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (chosen, user_id))
+        """,
+            (chosen, user_id),
+        )
         conn.commit()
 
         vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
@@ -468,17 +540,30 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== 8) ВЫБОР ТИПА ЗАДАНИЯ =====
-    if exam and subject and difficulty and not task_type and text_lower in {t.lower() for t in TASK_TYPES}:
+    if (
+        exam
+        and subject
+        and difficulty
+        and not task_type
+        and text_lower in {t.lower() for t in TASK_TYPES}
+    ):
         chosen = next(t for t in TASK_TYPES if t.lower() == text_lower)
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET task_type=%s, question=NULL, waiting_for_answer=false
             WHERE vk_user_id=%s
-        """, (chosen, user_id))
+        """,
+            (chosen, user_id),
+        )
         conn.commit()
 
-        vk_send(user_id, "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard())
+        vk_send(
+            user_id,
+            "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.",
+            get_game_keyboard(),
+        )
         conn.close()
         return PlainTextResponse("ok")
 
@@ -520,7 +605,7 @@ async def vk_webhook(request: Request):
                 f"Тип задания: {task_type}\n\n"
                 f"Нажмите «Знайка», чтобы получить вопрос."
             ),
-            get_game_keyboard()
+            get_game_keyboard(),
         )
         conn.close()
         return PlainTextResponse("ok")
@@ -555,7 +640,8 @@ async def vk_webhook(request: Request):
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
         q = get_question(exam, subject, difficulty, task_type, cur)
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET
                 question=%s,
@@ -563,14 +649,12 @@ async def vk_webhook(request: Request):
                 current_question_id=%s,
                 current_source=%s
             WHERE vk_user_id=%s
-        """, (q["text"], q["id"], q["source"], user_id))
-        conn.commit()
-  
-        vk_send(
-            user_id,
-            f"🧠 Вопрос от «Знайки»:\n{q['text']}",
-            get_game_keyboard()
+        """,
+            (q["text"], q["id"], q["source"], user_id),
         )
+        conn.commit()
+
+        vk_send(user_id, f"🧠 Вопрос от «Знайки»:\n{q['text']}", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -580,14 +664,19 @@ async def vk_webhook(request: Request):
 
         # --- 10.1 Проверка на отписку ---
         if text_lower in {
-            "сложно", "не знаю", "хз", "без понятия",
-            "не понял", "не могу", "не знаю ответ"
+            "сложно",
+            "не знаю",
+            "хз",
+            "без понятия",
+            "не понял",
+            "не могу",
+            "не знаю ответ",
         }:
             vk_send(
                 user_id,
                 "❌ Такой ответ не может быть засчитан.\n"
                 "Попробуйте описать решение или рассуждения.",
-                get_game_keyboard()
+                get_game_keyboard(),
             )
             conn.close()
             return PlainTextResponse("ok")
@@ -600,7 +689,7 @@ async def vk_webhook(request: Request):
                 user_id,
                 f"❌ Ответ слишком короткий для задания типа «{task_type}».\n"
                 f"Пожалуйста, опишите решение подробнее.",
-                get_game_keyboard()
+                get_game_keyboard(),
             )
             conn.close()
             return PlainTextResponse("ok")
@@ -610,44 +699,49 @@ async def vk_webhook(request: Request):
 
         is_correct = "RESULT: CORRECT" in result_text
 
-        cur.execute("""
-    	    INSERT INTO user_answers (vk_user_id, question_id, source, user_answer, is_correct)
-    	    VALUES (%s, %s, %s, %s, %s)
-        """, (
-    	    user_id,
-    	    current_qid,
-    	    current_source or "ai",
-    	    text,
-    	    is_correct
-        ))
+        cur.execute(
+            """
+            INSERT INTO user_answers (vk_user_id, question_id, source, user_answer, is_correct)
+            VALUES (%s, %s, %s, %s, %s)
+        """,
+            (user_id, current_qid, current_source or "ai", text, is_correct),
+        )
         conn.commit()
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE user_progress
             SET
                 waiting_for_answer=false,
                 question=NULL,
                 current_question_id=NULL,
-        	current_source=NULL,
-        	attempts_count = attempts_count + 1,
-        	correct_count = correct_count + %s
-    	WHERE vk_user_id=%s
-	""", (1 if is_correct else 0, user_id))
-	conn.commit()
-
-        vk_send(
-            user_id,
-            result_text.replace("RESULT: CORRECT", "✅ Верно")
-                       .replace("RESULT: WRONG", "❌ Неверно"),
-            get_game_keyboard()
+            current_source=NULL,
+            attempts_count = attempts_count + 1,
+            correct_count = correct_count + %s
+        WHERE vk_user_id=%s
+    """,
+            (1 if is_correct else 0, user_id),
         )
-        conn.close()
-        return PlainTextResponse("ok")
+    conn.commit()
+
+    vk_send(
+        user_id,
+        result_text.replace("RESULT: CORRECT", "✅ Верно").replace(
+            "RESULT: WRONG", "❌ Неверно"
+        ),
+        get_game_keyboard(),
+    )
+    conn.close()
+    return PlainTextResponse("ok")
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
     # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
     if waiting and question:
-        vk_send(user_id, "Пожалуйста, ответьте на текущий вопрос или используйте кнопки.", get_game_keyboard())
+        vk_send(
+            user_id,
+            "Пожалуйста, ответьте на текущий вопрос или используйте кнопки.",
+            get_game_keyboard(),
+        )
     elif not exam:
         vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
     elif not subject:
@@ -657,7 +751,9 @@ async def vk_webhook(request: Request):
     elif not task_type:
         vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
     else:
-        vk_send(user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard())
+        vk_send(
+            user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard()
+        )
 
     conn.close()
     return PlainTextResponse("ok")
