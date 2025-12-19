@@ -283,45 +283,41 @@ def choose_source(task_type: str, difficulty: str) -> str:
 
 
 def get_question(exam, subject, difficulty, task_type, cur):
-    source = choose_source(task_type, difficulty)
+    """
+    Гибридная логика:
+    1) Пытаемся взять вопрос из local_questions
+    2) Если нет — генерируем через AI
+    """
 
     # 1️⃣ Пробуем локальный банк
-    if source == "local":
-        cur.execute(
-            """
-            SELECT id, question_text
-            FROM questions
-            WHERE exam=%s
-              AND subject=%s
-              AND difficulty=%s
-              AND task_type=%s
-              AND source='local'
-            ORDER BY RANDOM()
-            LIMIT 1
-        """,
-            (exam, subject, difficulty, task_type),
-        )
-        row = cur.fetchone()
-        if row:
-            return {"id": row[0], "text": row[1], "source": "local"}
-
-        # fallback на AI
-        source = "ai"
-
-    # 2️⃣ AI-вопрос
-    text = generate_question(exam, subject, difficulty, task_type)
-
     cur.execute(
         """
-        INSERT INTO questions (exam, subject, difficulty, task_type, question_text, source)
-        VALUES (%s,%s,%s,%s,%s,'ai')
-        RETURNING id
-    """,
-        (exam, subject, difficulty, task_type, text),
+        SELECT question
+        FROM local_questions
+        WHERE exam = %s
+          AND subject = %s
+          AND difficulty = %s
+          AND task_type = %s
+        ORDER BY RANDOM()
+        LIMIT 1
+        """,
+        (exam, subject, difficulty, task_type),
     )
-    qid = cur.fetchone()[0]
 
-    return {"id": qid, "text": text, "source": "ai"}
+    row = cur.fetchone()
+    if row:
+        return {
+            "text": row[0],
+            "source": "local"
+        }
+
+    # 2️⃣ Фолбэк на AI
+    text = generate_question(exam, subject, difficulty, task_type)
+    return {
+        "text": text,
+        "source": "ai"
+    }
+
 
 
 # ================== HELPERS ==================
@@ -662,51 +658,34 @@ async def vk_webhook(request: Request):
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
 
-        # --- 10.1 Проверка на отписку ---
+        # 10.1 Отписка
         if text_lower in {
-            "сложно",
-            "не знаю",
-            "хз",
-            "без понятия",
-            "не понял",
-            "не могу",
-            "не знаю ответ",
+            "сложно", "не знаю", "хз", "без понятия",
+            "не понял", "не могу", "не знаю ответ"
         }:
             vk_send(
                 user_id,
                 "❌ Такой ответ не может быть засчитан.\n"
                 "Попробуйте описать решение или рассуждения.",
-                get_game_keyboard(),
+                get_game_keyboard()
             )
             conn.close()
             return PlainTextResponse("ok")
 
-        # --- 10.2 Проверка минимальной длины ---
+        # 10.2 Минимальная длина
         min_len = MIN_LEN_BY_TYPE.get(task_type)
-
         if min_len and len(text.strip()) < min_len:
             vk_send(
                 user_id,
-                f"❌ Ответ слишком короткий для задания типа «{task_type}».\n"
-                f"Пожалуйста, опишите решение подробнее.",
-                get_game_keyboard(),
+                f"❌ Ответ слишком короткий для задания типа «{task_type}».",
+                get_game_keyboard()
             )
             conn.close()
             return PlainTextResponse("ok")
 
-        # --- 10.3 Проверка через AI ---
+        # 10.3 AI-проверка — ТОЛЬКО ЗДЕСЬ
         result_text = check_answer(question, text, task_type)
-
         is_correct = "RESULT: CORRECT" in result_text
-
-        cur.execute(
-            """
-            INSERT INTO user_answers (vk_user_id, question_id, source, user_answer, is_correct)
-            VALUES (%s, %s, %s, %s, %s)
-        """,
-            (user_id, current_qid, current_source or "ai", text, is_correct),
-        )
-        conn.commit()
 
         cur.execute(
             """
@@ -714,25 +693,23 @@ async def vk_webhook(request: Request):
             SET
                 waiting_for_answer=false,
                 question=NULL,
-                current_question_id=NULL,
-            current_source=NULL,
-            attempts_count = attempts_count + 1,
-            correct_count = correct_count + %s
-        WHERE vk_user_id=%s
-    """,
-            (1 if is_correct else 0, user_id),
+                attempts_count = attempts_count + 1,
+                correct_count = correct_count + %s
+            WHERE vk_user_id=%s
+            """,
+            (1 if is_correct else 0, user_id)
         )
-    conn.commit()
+        conn.commit()
 
-    vk_send(
-        user_id,
-        result_text.replace("RESULT: CORRECT", "✅ Верно").replace(
-            "RESULT: WRONG", "❌ Неверно"
-        ),
-        get_game_keyboard(),
-    )
-    conn.close()
-    return PlainTextResponse("ok")
+        vk_send(
+            user_id,
+            result_text
+            .replace("RESULT: CORRECT", "✅ Верно")
+            .replace("RESULT: WRONG", "❌ Неверно"),
+            get_game_keyboard()
+        )
+        conn.close()
+        return PlainTextResponse("ok")
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
     # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
