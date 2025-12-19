@@ -283,41 +283,55 @@ def choose_source(task_type: str, difficulty: str) -> str:
 
 
 def get_question(exam, subject, difficulty, task_type, cur):
-    """
-    Гибридная логика:
-    1) Пытаемся взять вопрос из local_questions
-    2) Если нет — генерируем через AI
-    """
+    source = choose_source(task_type, difficulty)
 
-    # 1️⃣ Пробуем локальный банк
+    # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
+    if source == "local":
+        cur.execute(
+            """
+            SELECT id, question
+            FROM local_questions
+            WHERE exam=%s
+              AND subject=%s
+              AND difficulty=%s
+              AND task_type=%s
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (exam, subject, difficulty, task_type),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "text": row[1],
+                "source": "local",
+            }
+
+        # fallback
+        source = "ai"
+
+    # 2️⃣ AI-ВОПРОС → ОБЯЗАТЕЛЬНО СОХРАНЯЕМ В БД
+    text = generate_question(exam, subject, difficulty, task_type)
+
     cur.execute(
         """
-        SELECT question
-        FROM local_questions
-        WHERE exam = %s
-          AND subject = %s
-          AND difficulty = %s
-          AND task_type = %s
-        ORDER BY RANDOM()
-        LIMIT 1
+        INSERT INTO ai_questions (
+            exam, subject, difficulty, task_type, question
+        )
+        VALUES (%s,%s,%s,%s,%s)
+        RETURNING id
         """,
-        (exam, subject, difficulty, task_type),
+        (exam, subject, difficulty, task_type, text),
     )
 
-    row = cur.fetchone()
-    if row:
-        return {
-            "text": row[0],
-            "source": "local"
-        }
+    qid = cur.fetchone()[0]
 
-    # 2️⃣ Фолбэк на AI
-    text = generate_question(exam, subject, difficulty, task_type)
     return {
+        "id": qid,
         "text": text,
-        "source": "ai"
+        "source": "ai",
     }
-
 
 
 # ================== HELPERS ==================
