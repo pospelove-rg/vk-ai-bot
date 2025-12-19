@@ -71,7 +71,18 @@ def ensure_user_row(cur, user_id: int):
 
 def get_user_row(cur, user_id: int):
     cur.execute("""
-        SELECT exam, subject, difficulty, task_type, question, waiting_for_answer, solved_count
+        SELECT
+            exam,
+            subject,
+            difficulty,
+            task_type,
+            question,
+            waiting_for_answer,
+            solved_count,
+            current_question_id,
+            current_source,
+            attempts_count,
+            correct_count
         FROM user_progress
         WHERE vk_user_id=%s
     """, (user_id,))
@@ -211,6 +222,63 @@ EXPLANATION: краткое объяснение (2–4 предложения)
     )
     return r.choices[0].message.content.strip()
 
+# ================== QUESTION SOURCE ==================
+
+def choose_source(task_type: str, difficulty: str) -> str:
+    # Тесты всегда локальные (экономим AI)
+    if task_type == "Тест":
+        return "local"
+
+    # Базовая практика — сначала локально
+    if task_type == "Практика" and difficulty == "Базовый":
+        return "local"
+
+    return "ai"
+
+
+def get_question(exam, subject, difficulty, task_type, cur):
+    source = choose_source(task_type, difficulty)
+
+    # 1️⃣ Пробуем локальный банк
+    if source == "local":
+        cur.execute("""
+            SELECT id, question_text
+            FROM questions
+            WHERE exam=%s
+              AND subject=%s
+              AND difficulty=%s
+              AND task_type=%s
+              AND source='local'
+            ORDER BY RANDOM()
+            LIMIT 1
+        """, (exam, subject, difficulty, task_type))
+        row = cur.fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "text": row[1],
+                "source": "local"
+            }
+
+        # fallback на AI
+        source = "ai"
+
+    # 2️⃣ AI-вопрос
+    text = generate_question(exam, subject, difficulty, task_type)
+
+    cur.execute("""
+        INSERT INTO questions (exam, subject, difficulty, task_type, question_text, source)
+        VALUES (%s,%s,%s,%s,%s,'ai')
+        RETURNING id
+    """, (exam, subject, difficulty, task_type, text))
+    qid = cur.fetchone()[0]
+
+    return {
+        "id": qid,
+        "text": text,
+        "source": "ai"
+    }
+
 # ================== HELPERS ==================
 
 def normalize(text: str) -> str:
@@ -260,7 +328,20 @@ async def vk_webhook(request: Request):
 
     row = get_user_row(cur, user_id)
     # row: (exam, subject, difficulty, task_type, question, waiting_for_answer, solved_count)
-    exam, subject, difficulty, task_type, question, waiting, solved_count = row
+    (
+        exam,
+        subject,
+        difficulty,
+        task_type,
+        question,
+        waiting,
+        solved_count,
+        current_qid,
+        current_source,
+        attempts_count,
+        correct_count
+    ) = row
+
 
     # ===== 1) ПРИВЕТ (всегда раньше всего, чтобы "привет" не считался ответом) =====
     if text_lower in ("привет", "hello", "hi"):
@@ -429,34 +510,18 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        # ===== ПОКАЗ НАСТРОЕК ПЕРЕД СТАРТОМ =====
-        if not waiting and not question:
-            vk_send(
-                user_id,
-                (
-                    f"📘 Текущие настройки:\n"
-                    f"Экзамен: {exam}\n"
-                    f"Предмет: {subject}\n"
-                    f"Сложность: {difficulty}\n"
-                    f"Тип задания: {task_type}\n\n"
-                    f"Нажмите «Начать», чтобы получить вопрос,\n"
-                    f"или используйте кнопки ниже для изменения."
-                ),
-                get_game_keyboard()
-            )
-            conn.close()
-            return PlainTextResponse("ok")
-
-        new_q = generate_question(exam, subject, difficulty, task_type)
-
-        cur.execute("""
-            UPDATE user_progress
-            SET question=%s, waiting_for_answer=true
-            WHERE vk_user_id=%s
-        """, (new_q, user_id))
-        conn.commit()
-
-        vk_send(user_id, f"Вопрос:\n{new_q}", get_game_keyboard())
+        vk_send(
+            user_id,
+            (
+                f"📘 Текущие настройки:\n"
+                f"Экзамен: {exam}\n"
+                f"Предмет: {subject}\n"
+                f"Сложность: {difficulty}\n"
+                f"Тип задания: {task_type}\n\n"
+                f"Нажмите «Знайка», чтобы получить вопрос."
+            ),
+            get_game_keyboard()
+        )
         conn.close()
         return PlainTextResponse("ok")
 
@@ -488,16 +553,24 @@ async def vk_webhook(request: Request):
             return PlainTextResponse("ok")
 
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
-        new_q = generate_question(exam, subject, difficulty, task_type)
+        new_q = get_question(exam, subject, difficulty, task_type, cur)
 
         cur.execute("""
             UPDATE user_progress
-            SET question=%s, waiting_for_answer=true
+            SET
+                question=%s,
+                waiting_for_answer=true,
+                current_question_id=%s,
+                current_source=%s
             WHERE vk_user_id=%s
-        """, (new_q, user_id))
+        """, (q["text"], q["id"], q["source"], user_id))
         conn.commit()
-
-        vk_send(user_id, f"🧠 Вопрос от «Знайки»:\n{new_q}", get_game_keyboard())
+  
+        vk_send(
+            user_id,
+            f"🧠 Вопрос от «Знайки»:\n{q['text']}",
+            get_game_keyboard()
+        )
         conn.close()
         return PlainTextResponse("ok")
 
@@ -537,16 +610,28 @@ async def vk_webhook(request: Request):
 
         is_correct = "RESULT: CORRECT" in result_text
 
+	cur.execute("""
+    	    INSERT INTO user_answers (vk_user_id, question_id, source, user_answer, is_correct)
+    	    VALUES (%s, %s, %s, %s, %s)
+	""", (
+    	    user_id,
+    	    current_qid,
+    	    current_source or "ai",
+    	    text,
+    	    is_correct
+	))
+
         cur.execute("""
             UPDATE user_progress
             SET
                 waiting_for_answer=false,
                 question=NULL,
-                attempts_count = attempts_count + 1,
-                correct_count = correct_count + %s
-            WHERE vk_user_id=%s
-        """, (1 if is_correct else 0, user_id))
-        conn.commit()
+                current_question_id=NULL,
+        	current_source=NULL,
+        	attempts_count = attempts_count + 1,
+        	correct_count = correct_count + %s
+    	WHERE vk_user_id=%s
+	""", (1 if is_correct else 0, user_id))
 
         vk_send(
             user_id,
