@@ -553,7 +553,7 @@ async def vk_webhook(request: Request):
             return PlainTextResponse("ok")
 
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
-        new_q = get_question(exam, subject, difficulty, task_type, cur)
+        q = get_question(exam, subject, difficulty, task_type, cur)
 
         cur.execute("""
             UPDATE user_progress
@@ -610,16 +610,17 @@ async def vk_webhook(request: Request):
 
         is_correct = "RESULT: CORRECT" in result_text
 
-	cur.execute("""
+        cur.execute("""
     	    INSERT INTO user_answers (vk_user_id, question_id, source, user_answer, is_correct)
     	    VALUES (%s, %s, %s, %s, %s)
-	""", (
+        """, (
     	    user_id,
     	    current_qid,
     	    current_source or "ai",
     	    text,
     	    is_correct
-	))
+        ))
+        conn.commit()
 
         cur.execute("""
             UPDATE user_progress
@@ -632,6 +633,7 @@ async def vk_webhook(request: Request):
         	correct_count = correct_count + %s
     	WHERE vk_user_id=%s
 	""", (1 if is_correct else 0, user_id))
+	conn.commit()
 
         vk_send(
             user_id,
