@@ -671,6 +671,66 @@ async def vk_webhook(request: Request):
     # ===== 10) ОТВЕТ НА ВОПРОС =====
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
+        
+        # ===== 10.X) ОБРАБОТКА ТЕСТОВ =====
+        if task_type == "Тест":
+            answer = text.strip().upper()
+
+            # замена русских букв
+            ru_to_en = {"А": "A", "В": "B", "С": "C", "Д": "D"}
+            answer = ru_to_en.get(answer, answer)
+
+            if answer not in {"A", "B", "C", "D"}:
+                vk_send(
+                    user_id,
+                    "❌ В тесте нужно ответить буквой: A, B, C или D.",
+                    get_game_keyboard(),
+                )
+                conn.close()
+                return PlainTextResponse("ok")
+
+            # получаем правильный ответ из local_questions
+            cur.execute(
+                """
+                SELECT correct_answer, explanation
+                FROM local_questions
+                WHERE id = %s
+                """,
+                (current_qid,),
+            )
+            row = cur.fetchone()
+
+            if not row:
+                vk_send(user_id, "⚠️ Ошибка вопроса. Сообщите администратору.", get_game_keyboard())
+                conn.close()
+                return PlainTextResponse("ok")
+
+            correct_answer, explanation = row
+            is_correct = answer == correct_answer
+
+            cur.execute(
+                """
+                UPDATE user_progress
+                SET
+                    waiting_for_answer = false,
+                    question = NULL,
+                    attempts_count = attempts_count + 1,
+                    correct_count = correct_count + %s
+                WHERE vk_user_id = %s
+                """,
+                (1 if is_correct else 0, user_id),
+            )
+            conn.commit()
+
+            vk_send(
+                user_id,
+                (
+                    "✅ Верно!\n" if is_correct else "❌ Неверно.\n"
+                ) + f"Пояснение: {explanation}",
+                get_game_keyboard(),
+            )
+            conn.close()
+            return PlainTextResponse("ok")
 
         # ===== 10.A) ТЕСТ — БЕЗ AI =====
         if task_type == "Тест":
