@@ -308,8 +308,8 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 "source": "local",
             }
 
-        # fallback
-        source = "ai"
+        # ⛔ НЕТ ТЕСТОВ — НЕ ИСПОЛЬЗУЕМ AI
+        return None
 
     # 2️⃣ AI-ВОПРОС → ОБЯЗАТЕЛЬНО СОХРАНЯЕМ В БД
     text = generate_question(exam, subject, difficulty, task_type)
@@ -649,6 +649,16 @@ async def vk_webhook(request: Request):
 
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
         q = get_question(exam, subject, difficulty, task_type, cur)
+
+        if not q:
+            vk_send(
+                user_id,
+                "⚠️ Для выбранных настроек пока нет готовых тестов.\n"
+                "Попробуйте изменить предмет или сложность.",
+                get_game_keyboard(),
+            )
+            conn.close()
+            return PlainTextResponse("ok")
 
         cur.execute(
             """
