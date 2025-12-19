@@ -672,6 +672,70 @@ async def vk_webhook(request: Request):
     # Ответом считаем только если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
 
+        # ===== 10.A) ТЕСТ — БЕЗ AI =====
+        if task_type == "Тест":
+            answer = text.strip().upper()
+
+            if answer not in {"A", "B", "C", "D"}:
+                vk_send(
+                    user_id,
+                    "❌ В тесте нужно ответить буквой: A, B, C или D.",
+                    get_game_keyboard(),
+                )
+                conn.close()
+                return PlainTextResponse("ok")
+
+            # берём правильный ответ из local_questions
+            cur.execute(
+                """
+                SELECT correct_answer, explanation
+                FROM local_questions
+                WHERE id = %s
+                """,
+                (current_qid,),
+            )
+            row = cur.fetchone()
+
+            if not row:
+                vk_send(
+                    user_id,
+                    "❌ Ошибка проверки теста. Вопрос не найден.",
+                    get_game_keyboard(),
+                )
+                conn.close()
+                return PlainTextResponse("ok")
+
+            correct_answer, explanation = row
+            is_correct = (answer == correct_answer)
+
+            cur.execute(
+                """
+                UPDATE user_progress
+                SET
+                    waiting_for_answer = false,
+                    question = NULL,
+                    attempts_count = attempts_count + 1,
+                    correct_count = correct_count + %s
+                WHERE vk_user_id = %s
+                """,
+                (1 if is_correct else 0, user_id),
+            )
+            conn.commit()
+
+            vk_send(
+                user_id,
+                (
+                    "✅ Верно!"
+                    if is_correct
+                    else f"❌ Неверно.\n\nПояснение: {explanation}"
+                ),
+                get_game_keyboard(),
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # ===== 10.B) ОСТАЛЬНЫЕ ТИПЫ — ЧЕРЕЗ AI =====
+
         # 10.1 Отписка
         if text_lower in {
             "сложно", "не знаю", "хз", "без понятия",
@@ -681,7 +745,7 @@ async def vk_webhook(request: Request):
                 user_id,
                 "❌ Такой ответ не может быть засчитан.\n"
                 "Попробуйте описать решение или рассуждения.",
-                get_game_keyboard()
+                get_game_keyboard(),
             )
             conn.close()
             return PlainTextResponse("ok")
@@ -692,12 +756,12 @@ async def vk_webhook(request: Request):
             vk_send(
                 user_id,
                 f"❌ Ответ слишком короткий для задания типа «{task_type}».",
-                get_game_keyboard()
+                get_game_keyboard(),
             )
             conn.close()
             return PlainTextResponse("ok")
 
-        # 10.3 AI-проверка — ТОЛЬКО ЗДЕСЬ
+        # 10.3 AI-проверка
         result_text = check_answer(question, text, task_type)
         is_correct = "RESULT: CORRECT" in result_text
 
@@ -705,13 +769,13 @@ async def vk_webhook(request: Request):
             """
             UPDATE user_progress
             SET
-                waiting_for_answer=false,
-                question=NULL,
+                waiting_for_answer = false,
+                question = NULL,
                 attempts_count = attempts_count + 1,
                 correct_count = correct_count + %s
-            WHERE vk_user_id=%s
+            WHERE vk_user_id = %s
             """,
-            (1 if is_correct else 0, user_id)
+            (1 if is_correct else 0, user_id),
         )
         conn.commit()
 
@@ -720,10 +784,11 @@ async def vk_webhook(request: Request):
             result_text
             .replace("RESULT: CORRECT", "✅ Верно")
             .replace("RESULT: WRONG", "❌ Неверно"),
-            get_game_keyboard()
+            get_game_keyboard(),
         )
         conn.close()
         return PlainTextResponse("ok")
+
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
     # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
