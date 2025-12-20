@@ -289,7 +289,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
     if source == "local":
         cur.execute(
             """
-            SELECT id, question
+            SELECT id, question_text
             FROM local_questions
             WHERE exam=%s
               AND subject=%s
@@ -308,23 +308,20 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 "source": "local",
             }
 
-        # ⛔ НЕТ ТЕСТОВ — НЕ ИСПОЛЬЗУЕМ AI
-        return None
+        # fallback на AI
+        source = "ai"
 
-    # 2️⃣ AI-ВОПРОС → ОБЯЗАТЕЛЬНО СОХРАНЯЕМ В БД
+    # 2️⃣ AI-вопрос
     text = generate_question(exam, subject, difficulty, task_type)
 
     cur.execute(
         """
-        INSERT INTO ai_questions (
-            exam, subject, difficulty, task_type, question
-        )
+        INSERT INTO ai_questions (exam, subject, difficulty, task_type, question)
         VALUES (%s,%s,%s,%s,%s)
         RETURNING id
         """,
         (exam, subject, difficulty, task_type, text),
     )
-
     qid = cur.fetchone()[0]
 
     return {
@@ -332,6 +329,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
         "text": text,
         "source": "ai",
     }
+
 
 
 # ================== HELPERS ==================
