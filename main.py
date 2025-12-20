@@ -289,7 +289,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
     if source == "local":
         cur.execute(
             """
-            SELECT id, question_text
+            SELECT id, question
             FROM local_questions
             WHERE exam=%s
               AND subject=%s
