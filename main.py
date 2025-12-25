@@ -568,7 +568,7 @@ async def vk_webhook(request: Request):
         )
         conn.commit()
 
-        vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
+        vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -576,6 +576,8 @@ async def vk_webhook(request: Request):
     if (
         exam
         and subject
+        and task_type
+        and task_type != "Тест"
         and not difficulty
         and text_lower in {d.lower() for d in DIFFICULTIES}
     ):
@@ -599,42 +601,68 @@ async def vk_webhook(request: Request):
 
         conn.commit()
 
-        vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
-        conn.close()
-        return PlainTextResponse("ok")
-
-    # ===== 8) ВЫБОР ТИПА ЗАДАНИЯ =====
-    if (
-        exam
-        and subject
-        and difficulty
-        and not task_type
-        and text_lower in {t.lower() for t in TASK_TYPES}
-    ):
-        chosen = next(t for t in TASK_TYPES if t.lower() == text_lower)
-
-        cur.execute(
-            """
-            UPDATE user_progress
-            SET
-                task_type = %s,
-                question = NULL,
-                waiting_for_answer = false,
-                current_question_id = NULL,
-                current_source = NULL
-            WHERE vk_user_id = %s
-        """,
-            (chosen, user_id),
-        )
-        conn.commit()
-
         vk_send(
             user_id,
             "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.",
             get_game_keyboard(),
         )
+
+    # ===== 8) ВЫБОР ТИПА ЗАДАНИЯ =====
+    if (
+        exam
+        and subject
+        and not task_type
+        and text_lower in {t.lower() for t in TASK_TYPES}
+    ):
+        chosen = next(t for t in TASK_TYPES if t.lower() == text_lower)
+
+        # ✅ Если выбрали "Тест" — сложность не нужна
+        if chosen == "Тест":
+            cur.execute(
+                """
+                UPDATE user_progress
+                SET
+                    task_type = %s,
+                    difficulty = NULL,
+                    question = NULL,
+                    waiting_for_answer = false,
+                    current_question_id = NULL,
+                    current_source = NULL
+                WHERE vk_user_id = %s
+                """,
+                (chosen, user_id),
+            )
+            conn.commit()
+
+            vk_send(
+                user_id,
+                "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.",
+                get_game_keyboard(),
+            )
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # ✅ Для остальных типов — просим сложность
+        cur.execute(
+            """
+            UPDATE user_progress
+            SET
+                task_type = %s,
+                difficulty = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
+            """,
+            (chosen, user_id),
+        )
+        conn.commit()
+
+        vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
         conn.close()
         return PlainTextResponse("ok")
+
 
     # ===== 9) НАЧАТЬ =====
     if text_lower == "начать":
@@ -654,7 +682,7 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        if not difficulty:
+        if task_type != "Тест" and not difficulty:
             vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
             conn.close()
             return PlainTextResponse("ok")
@@ -696,7 +724,7 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        if not difficulty:
+        if task_type != "Тест" and not difficulty:
             vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
             conn.close()
             return PlainTextResponse("ok")
@@ -881,9 +909,9 @@ async def vk_webhook(request: Request):
     elif not subject:
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
     elif not difficulty:
-        vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
-    elif not task_type:
         vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
+    elif not task_type:
+        vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
     else:
         vk_send(
             user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard()
