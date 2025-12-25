@@ -75,9 +75,12 @@ def get_connection():
         user="vk_ai_bot_db_user",
         password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
         database="vk_ai_bot_db",
-        options="-c client_encoding=UTF8"
     )
 
+    # 🔒 ЖЁСТКО фиксируем кодировку
+    conn.set_client_encoding("UTF8")
+
+    return conn
 
 def ensure_user_row(cur, user_id: int):
     cur.execute(
@@ -403,7 +406,8 @@ async def vk_webhook(request: Request):
 
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SET client_encoding = 'UTF8'")
+    cur.execute("SHOW client_encoding")
+    print("[ENCODING]", cur.fetchone())
 
     # гарантируем строку пользователя
     ensure_user_row(cur, user_id)
