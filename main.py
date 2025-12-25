@@ -411,11 +411,10 @@ async def vk_webhook(request: Request):
 
     row = get_user_row(cur, user_id)
     if not row:
-    # экстренно создаём строку ещё раз и перечитываем
-    ensure_user_row(cur, user_id)
-    conn.commit()
-
-    row = get_user_row(cur, user_id)
+        # экстренно создаём строку ещё раз и перечитываем
+        ensure_user_row(cur, user_id)
+        conn.commit()
+        row = get_user_row(cur, user_id)
 
     if not row:
         vk_send(
