@@ -279,7 +279,32 @@ EXPLANATION: краткое объяснение (2–4 предложения)
 def choose_source(task_type: str, difficulty: str) -> str:
     # Тесты всегда локальные (экономим AI)
     if task_type == "Тест":
-        return "local"
+        cur.execute(
+            """
+            SELECT id, question
+            FROM local_questions
+            WHERE exam=%s
+              AND subject=%s
+              AND task_type='Тест'
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (exam, subject),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, question
+            FROM local_questions
+            WHERE exam=%s
+              AND subject=%s
+              AND difficulty=%s
+              AND task_type=%s
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (exam, subject, difficulty, task_type),
+        )
 
     # Базовая практика — сначала локально
     if task_type == "Практика" and difficulty == "Базовый":
