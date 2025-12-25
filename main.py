@@ -314,8 +314,8 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 "source": "local",
             }
 
-        # fallback на AI
-        source = "ai"
+        # ❌ ДЛЯ ТЕСТОВ FALLBACK ЗАПРЕЩЁН
+        return None
 
     # 2️⃣ AI-ВОПРОС
     text = generate_question(exam, subject, difficulty, task_type)
