@@ -410,6 +410,21 @@ async def vk_webhook(request: Request):
     conn.commit()
 
     row = get_user_row(cur, user_id)
+    if not row:
+    # экстренно создаём строку ещё раз и перечитываем
+    ensure_user_row(cur, user_id)
+    conn.commit()
+
+    row = get_user_row(cur, user_id)
+
+    if not row:
+        vk_send(
+            user_id,
+            "Произошла внутренняя ошибка. Нажмите «Начать».",
+            get_main_keyboard()
+        )
+        conn.close()
+        return PlainTextResponse("ok")
     # row: (exam, subject, difficulty, task_type, question, waiting_for_answer, solved_count)
     (
         exam,
@@ -673,23 +688,27 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
+        # 1. Экзамен
         if not exam:
             vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
+        # 2. Предмет
         if not subject:
             vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
             conn.close()
             return PlainTextResponse("ok")
 
-        if task_type != "Тест" and not difficulty:
-            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
+        # 3. Тип задания
+        if not task_type:
+            vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
-        if not task_type:
-            vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
+        # 4. Сложность — ТОЛЬКО если не тест
+        if task_type != "Тест" and not difficulty:
+            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
