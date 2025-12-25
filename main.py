@@ -317,7 +317,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
         # fallback на AI
         source = "ai"
 
-    # 2️⃣ AI-вопрос
+    # 2️⃣ AI-ВОПРОС
     text = generate_question(exam, subject, difficulty, task_type)
 
     # 🔐 ЗАЩИТА ОТ НЕПРАВИЛЬНОГО ФОРМАТА ТЕСТА
@@ -328,14 +328,19 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 "text": "⚠️ Ошибка генерации теста. Попробуйте ещё раз.",
                 "source": "ai",
             }
+
+    # 3️⃣ СОХРАНЯЕМ ТОЛЬКО КОРРЕКТНЫЙ AI-ВОПРОС
     cur.execute(
         """
-        INSERT INTO ai_questions (exam, subject, difficulty, task_type, question)
+        INSERT INTO ai_questions (
+            exam, subject, difficulty, task_type, question
+        )
         VALUES (%s,%s,%s,%s,%s)
         RETURNING id
         """,
         (exam, subject, difficulty, task_type, text),
     )
+
     qid = cur.fetchone()[0]
 
     return {
@@ -343,6 +348,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
         "text": text,
         "source": "ai",
     }
+
 
 
 
