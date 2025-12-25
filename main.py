@@ -696,47 +696,111 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
-            # ===== 10) ОТВЕТ НА ВОПРОС =====
-# Ответ принимаем ТОЛЬКО если реально ждём ответ и это не команда
-if waiting and question and (not is_command(text_lower)):
+    # ===== 10) ОТВЕТ НА ВОПРОС =====
+    # Ответ принимаем ТОЛЬКО если реально ждём ответ и это не команда
+    if waiting and question and (not is_command(text_lower)):
 
-    # ===== 10.0 ТЕСТ: ТОЛЬКО A–D =====
-    if task_type == "Тест":
-        answer = text_upper.strip()
+        # ===== 10.0 ТЕСТ: ТОЛЬКО A–D =====
+        if task_type == "Тест":
+            answer = text_upper.strip()
 
-        if answer not in {"A", "B", "C", "D"}:
+            if answer not in {"A", "B", "C", "D"}:
+                vk_send(
+                    user_id,
+                    "❌ В тесте нужно ответить буквой: A, B, C или D.",
+                    get_game_keyboard(),
+                )
+                conn.close()
+                return PlainTextResponse("ok")
+
+            # получаем правильный вариант из local_questions
+            cur.execute(
+                """
+                SELECT correct_option
+                FROM local_questions
+                WHERE id = %s
+                """,
+                (current_qid,),
+            )
+            row = cur.fetchone()
+
+            if not row:
+                vk_send(
+                    user_id,
+                    "⚠️ Ошибка вопроса. Сообщите администратору.",
+                    get_game_keyboard(),
+                )
+                conn.close()
+                return PlainTextResponse("ok")
+
+            correct_option = row[0]
+            is_correct = answer == correct_option
+
+            # обновляем статистику
+            cur.execute(
+                """
+                UPDATE user_progress
+                SET
+                    waiting_for_answer = false,
+                    question = NULL,
+                    attempts_count = attempts_count + 1,
+                    correct_count = correct_count + %s
+                WHERE vk_user_id = %s
+                """,
+                (1 if is_correct else 0, user_id),
+            )
+            conn.commit()
+
             vk_send(
                 user_id,
-                "❌ В тесте нужно ответить буквой: A, B, C или D.",
+                "✅ Верно!" if is_correct else f"❌ Неверно. Правильный ответ: {correct_option}",
+                get_game_keyboard(),
+            )
+
+            # ===== 10.0.1 АВТОПЕРЕХОД К СЛЕДУЮЩЕМУ ВОПРОСУ =====
+            q = get_question(exam, subject, difficulty, task_type, cur)
+
+            if q:
+                cur.execute(
+                    """
+                    UPDATE user_progress
+                    SET
+                        question = %s,
+                        waiting_for_answer = true,
+                        current_question_id = %s,
+                        current_source = %s
+                    WHERE vk_user_id = %s
+                    """,
+                    (q["text"], q["id"], q["source"], user_id),
+                )
+                conn.commit()
+
+                vk_send(
+                    user_id,
+                    f"🧠 Следующий вопрос:\n{q['text']}",
+                    get_game_keyboard(),
+                )
+
+            conn.close()
+            return PlainTextResponse("ok")
+
+        # ===== 10.1 НЕ ТЕСТ (AI-ПРОВЕРКА) =====
+
+        # 10.1.1 Минимальная длина
+        min_len = MIN_LEN_BY_TYPE.get(task_type)
+        if min_len and len(text.strip()) < min_len:
+            vk_send(
+                user_id,
+                f"❌ Ответ слишком короткий для задания типа «{task_type}».",
                 get_game_keyboard(),
             )
             conn.close()
             return PlainTextResponse("ok")
 
-        # получаем правильный вариант из local_questions
-        cur.execute(
-            """
-            SELECT correct_option
-            FROM local_questions
-            WHERE id = %s
-            """,
-            (current_qid,),
-        )
-        row = cur.fetchone()
+        # 10.1.2 AI-проверка
+        result_text = check_answer(question, text, task_type)
+        is_correct = "RESULT: CORRECT" in result_text
 
-        if not row:
-            vk_send(
-                user_id,
-                "⚠️ Ошибка вопроса. Сообщите администратору.",
-                get_game_keyboard(),
-            )
-            conn.close()
-            return PlainTextResponse("ok")
-
-        correct_option = row[0]
-        is_correct = answer == correct_option
-
-        # обновляем статистику
         cur.execute(
             """
             UPDATE user_progress
@@ -753,81 +817,14 @@ if waiting and question and (not is_command(text_lower)):
 
         vk_send(
             user_id,
-            "✅ Верно!" if is_correct else f"❌ Неверно. Правильный ответ: {correct_option}",
+            result_text
+            .replace("RESULT: CORRECT", "✅ Верно")
+            .replace("RESULT: WRONG", "❌ Неверно"),
             get_game_keyboard(),
         )
 
-        # ===== 10.0.1 АВТОПЕРЕХОД К СЛЕДУЮЩЕМУ ВОПРОСУ =====
-        q = get_question(exam, subject, difficulty, task_type, cur)
-
-        if q:
-            cur.execute(
-                """
-                UPDATE user_progress
-                SET
-                    question = %s,
-                    waiting_for_answer = true,
-                    current_question_id = %s,
-                    current_source = %s
-                WHERE vk_user_id = %s
-                """,
-                (q["text"], q["id"], q["source"], user_id),
-            )
-            conn.commit()
-
-            vk_send(
-                user_id,
-                f"🧠 Следующий вопрос:\n{q['text']}",
-                get_game_keyboard(),
-            )
-
         conn.close()
         return PlainTextResponse("ok")
-
-    # ===== 10.1 НЕ ТЕСТ (AI-ПРОВЕРКА) =====
-
-    # 10.1.1 Минимальная длина
-    min_len = MIN_LEN_BY_TYPE.get(task_type)
-    if min_len and len(text.strip()) < min_len:
-        vk_send(
-            user_id,
-            f"❌ Ответ слишком короткий для задания типа «{task_type}».",
-            get_game_keyboard(),
-        )
-        conn.close()
-        return PlainTextResponse("ok")
-
-    # 10.1.2 AI-проверка
-    result_text = check_answer(question, text, task_type)
-    is_correct = "RESULT: CORRECT" in result_text
-
-    cur.execute(
-        """
-        UPDATE user_progress
-        SET
-            waiting_for_answer = false,
-            question = NULL,
-            attempts_count = attempts_count + 1,
-            correct_count = correct_count + %s
-        WHERE vk_user_id = %s
-        """,
-        (1 if is_correct else 0, user_id),
-    )
-    conn.commit()
-
-    vk_send(
-        user_id,
-        result_text
-        .replace("RESULT: CORRECT", "✅ Верно")
-        .replace("RESULT: WRONG", "❌ Неверно"),
-        get_game_keyboard(),
-    )
-
-    conn.close()
-    return PlainTextResponse("ok")
-
-
-
 
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
