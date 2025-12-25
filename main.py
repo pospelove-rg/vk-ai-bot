@@ -68,8 +68,7 @@ MIN_LEN_BY_TYPE = {
 
 
 def get_connection():
-    # Рекомендация: вынести в env, но оставляю как у тебя (чтобы "ничего не потерять").
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         host="dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com",
         port="5432",
         user="vk_ai_bot_db_user",
@@ -77,7 +76,7 @@ def get_connection():
         database="vk_ai_bot_db",
     )
 
-    # 🔒 ЖЁСТКО фиксируем кодировку
+    # 🔒 ЖЁСТКО фиксируем кодировку ПОСЛЕ соединения
     conn.set_client_encoding("UTF8")
 
     return conn
