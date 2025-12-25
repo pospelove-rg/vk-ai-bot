@@ -75,6 +75,7 @@ def get_connection():
         user="vk_ai_bot_db_user",
         password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
         database="vk_ai_bot_db",
+        options="-c client_encoding=UTF8"
     )
 
 
