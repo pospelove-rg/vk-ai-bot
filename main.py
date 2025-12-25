@@ -75,10 +75,7 @@ def get_connection():
         password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
         database="vk_ai_bot_db",
     )
-
-    # 🔒 ЖЁСТКО фиксируем кодировку ПОСЛЕ соединения
     conn.set_client_encoding("UTF8")
-
     return conn
 
 def ensure_user_row(cur, user_id: int):
