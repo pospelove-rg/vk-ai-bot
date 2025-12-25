@@ -274,7 +274,14 @@ EXPLANATION: краткое объяснение (2–4 предложения)
 
 
 # ================== QUESTION SOURCE ==================
+def choose_source(task_type: str, difficulty: str) -> str:
+    if task_type == "Тест":
+        return "local"
 
+    if task_type == "Практика" and difficulty == "Базовый":
+        return "local"
+
+    return "ai"
 
 def get_question(exam, subject, difficulty, task_type, cur):
     source = choose_source(task_type, difficulty)
