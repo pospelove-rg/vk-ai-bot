@@ -276,61 +276,41 @@ EXPLANATION: краткое объяснение (2–4 предложения)
 # ================== QUESTION SOURCE ==================
 
 
-def choose_source(task_type: str, difficulty: str) -> str:
-    # Тесты всегда локальные (экономим AI)
-    if task_type == "Тест":
-        cur.execute(
-            """
-            SELECT id, question
-            FROM local_questions
-            WHERE exam=%s
-              AND subject=%s
-              AND task_type='Тест'
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (exam, subject),
-        )
-    else:
-        cur.execute(
-            """
-            SELECT id, question
-            FROM local_questions
-            WHERE exam=%s
-              AND subject=%s
-              AND difficulty=%s
-              AND task_type=%s
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (exam, subject, difficulty, task_type),
-        )
-
-    # Базовая практика — сначала локально
-    if task_type == "Практика" and difficulty == "Базовый":
-        return "local"
-
-    return "ai"
-
-
 def get_question(exam, subject, difficulty, task_type, cur):
     source = choose_source(task_type, difficulty)
 
     # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
     if source == "local":
-        cur.execute(
-            """
-            SELECT id, question
-            FROM local_questions
-            WHERE exam=%s
-              AND subject=%s
-              AND difficulty=%s
-              AND task_type=%s
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (exam, subject, difficulty, task_type),
-        )
+
+        # 🔒 ТЕСТЫ — БЕЗ difficulty
+        if task_type == "Тест":
+            cur.execute(
+                """
+                SELECT id, question
+                FROM local_questions
+                WHERE exam = %s
+                  AND subject = %s
+                  AND task_type = 'Тест'
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (exam, subject),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, question
+                FROM local_questions
+                WHERE exam = %s
+                  AND subject = %s
+                  AND difficulty = %s
+                  AND task_type = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (exam, subject, difficulty, task_type),
+            )
+
         row = cur.fetchone()
         if row:
             return {
@@ -340,21 +320,12 @@ def get_question(exam, subject, difficulty, task_type, cur):
             }
 
         # ❌ ДЛЯ ТЕСТОВ FALLBACK ЗАПРЕЩЁН
-        return None
+        if task_type == "Тест":
+            return None
 
-    # 2️⃣ AI-ВОПРОС
+    # 2️⃣ AI-ВОПРОС (только НЕ тесты)
     text = generate_question(exam, subject, difficulty, task_type)
 
-    # 🔐 ЗАЩИТА ОТ НЕПРАВИЛЬНОГО ФОРМАТА ТЕСТА
-    if task_type == "Тест":
-        if not any(x in text for x in ["A)", "B)", "C)", "D)"]):
-            return {
-                "id": None,
-                "text": "⚠️ Ошибка генерации теста. Попробуйте ещё раз.",
-                "source": "ai",
-            }
-
-    # 3️⃣ СОХРАНЯЕМ ТОЛЬКО КОРРЕКТНЫЙ AI-ВОПРОС
     cur.execute(
         """
         INSERT INTO ai_questions (
