@@ -430,7 +430,7 @@ async def vk_webhook(request: Request):
             "Привет! 👋 Я бот для подготовки к ОГЭ и ЕГЭ.\n\n"
             "Как работать со мной:\n"
             "1️⃣ Выбери экзамен и предмет\n"
-            "2️⃣ Укажи сложность и тип задания\n"
+            "2️⃣ Укажи тип задания и (сложность - если надо)\n"
             "3️⃣ Нажми «Знайка» — получишь вопрос\n"
             "4️⃣ Отвечай текстом или буквой (в тестах)\n\n"
             "В любой момент можно сменить предмет или экзамен кнопками ниже.",
@@ -589,7 +589,6 @@ async def vk_webhook(request: Request):
             UPDATE user_progress
             SET
                 difficulty = %s,
-                task_type = NULL,
                 question = NULL,
                 waiting_for_answer = false,
                 current_question_id = NULL,
@@ -897,7 +896,6 @@ async def vk_webhook(request: Request):
 
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
-    # Если пользователь нажал что-то не по сценарию — мягко подсказываем нужный шаг
     if waiting and question:
         vk_send(
             user_id,
@@ -908,14 +906,13 @@ async def vk_webhook(request: Request):
         vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
     elif not subject:
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
-    elif not difficulty:
-        vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
     elif not task_type:
+        vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
+    elif task_type != "Тест" and not difficulty:
         vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
     else:
         vk_send(
             user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard()
         )
-
     conn.close()
     return PlainTextResponse("ok")
