@@ -471,9 +471,16 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET exam=NULL, subject=NULL, difficulty=NULL, task_type=NULL,
-                question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                exam = NULL,
+                subject = NULL,
+                difficulty = NULL,
+                task_type = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (user_id,),
         )
@@ -492,12 +499,19 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET subject=NULL, difficulty=NULL, task_type=NULL,
-                question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                subject = NULL,
+                difficulty = NULL,
+                task_type = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (user_id,),
         )
+
         conn.commit()
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
         conn.close()
@@ -508,9 +522,16 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET exam=%s, subject=NULL, difficulty=NULL, task_type=NULL,
-                question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                exam = %s,
+                subject = NULL,
+                difficulty = NULL,
+                task_type = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (text_upper, user_id),
         )
@@ -530,9 +551,15 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET subject=%s, difficulty=NULL, task_type=NULL,
-                question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                subject = %s,
+                difficulty = NULL,
+                task_type = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (text, user_id),
         )
@@ -555,12 +582,18 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET difficulty=%s, task_type=NULL,
-                question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                difficulty = %s,
+                task_type = NULL,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (chosen, user_id),
         )
+
         conn.commit()
 
         vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
@@ -580,8 +613,13 @@ async def vk_webhook(request: Request):
         cur.execute(
             """
             UPDATE user_progress
-            SET task_type=%s, question=NULL, waiting_for_answer=false
-            WHERE vk_user_id=%s
+            SET
+                task_type = %s,
+                question = NULL,
+                waiting_for_answer = false,
+                current_question_id = NULL,
+                current_source = NULL
+            WHERE vk_user_id = %s
         """,
             (chosen, user_id),
         )
