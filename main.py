@@ -297,11 +297,11 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 FROM local_questions
                 WHERE exam = %s
                   AND subject = %s
-                  AND task_type = 'Тест'
+                  AND task_type = %s
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
-                (exam, subject),
+                (exam, subject, task_type),
             )
         else:
             cur.execute(
