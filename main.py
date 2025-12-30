@@ -308,16 +308,16 @@ def get_question(exam, subject, difficulty, task_type, cur):
     )
     print("[DBG sample row]", cur.fetchone())
 
-cur.execute(
-    """
-    SELECT
-      encode(convert_to(%s,'UTF8'),'hex') AS p_exam_hex,
-      encode(convert_to(%s,'UTF8'),'hex') AS p_subject_hex,
-      encode(convert_to(%s,'UTF8'),'hex') AS p_task_hex
-    """,
-    (exam, subject, task_type),
-)
-print("[DBG params hex]", cur.fetchone())
+    cur.execute(
+        """
+        SELECT
+          encode(convert_to(%s,'UTF8'),'hex') AS p_exam_hex,
+          encode(convert_to(%s,'UTF8'),'hex') AS p_subject_hex,
+          encode(convert_to(%s,'UTF8'),'hex') AS p_task_hex
+        """,
+        (exam, subject, task_type),
+    )
+    print("[DBG params hex]", cur.fetchone())
 
 
     # 🔒 Для тестов difficulty не используется
