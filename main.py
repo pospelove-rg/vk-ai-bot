@@ -290,24 +290,48 @@ def get_question(exam, subject, difficulty, task_type, cur):
 
     source = choose_source(task_type, difficulty)
 
+    if source == "local":
+        if task_type == "Тест":
+            # DEBUG: покажем реальные байты
+            print("[DBG get_question params]",
+                  "exam=", repr(exam),
+                  "subject=", repr(subject),
+                  "task_type=", repr(task_type))
+
+            # DEBUG: проверим COUNT по тем же параметрам
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM local_questions
+                WHERE exam = %s AND subject = %s AND task_type = %s
+                """,
+                (exam, subject, task_type),
+            )
+            print("[DBG local_questions COUNT]", cur.fetchone())
+
     # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
     if source == "local":
 
         # 🔒 ТЕСТЫ — БЕЗ difficulty
         if task_type == "Тест":
             cur.execute(
-                """
-                SELECT id, question
-                FROM local_questions
-                WHERE
-                    trim(regexp_replace(exam, '\\s+', ' ', 'g')) = trim(%s)
-                AND trim(regexp_replace(subject, '\\s+', ' ', 'g')) = trim(%s)
-                AND trim(regexp_replace(task_type, '\\s+', ' ', 'g')) = trim(%s)
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (exam, subject, task_type),
-            )
+            """
+            SELECT id, question
+            FROM local_questions
+            WHERE
+              trim(regexp_replace(replace(exam, chr(160), ' '), '\\s+', ' ', 'g')) =
+              trim(regexp_replace(replace(%s,  chr(160), ' '), '\\s+', ' ', 'g'))
+              AND
+              trim(regexp_replace(replace(subject, chr(160), ' '), '\\s+', ' ', 'g')) =
+              trim(regexp_replace(replace(%s,    chr(160), ' '), '\\s+', ' ', 'g'))
+              AND
+              trim(regexp_replace(replace(task_type, chr(160), ' '), '\\s+', ' ', 'g')) =
+              trim(regexp_replace(replace(%s,       chr(160), ' '), '\\s+', ' ', 'g'))
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (exam, subject, task_type),
+        )
         else:
             cur.execute(
                 """
