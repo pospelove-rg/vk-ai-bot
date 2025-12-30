@@ -318,15 +318,9 @@ def get_question(exam, subject, difficulty, task_type, cur):
             """
             SELECT id, question
             FROM local_questions
-            WHERE
-              trim(regexp_replace(replace(exam, chr(160), ' '), '\\s+', ' ', 'g')) =
-              trim(regexp_replace(replace(%s,  chr(160), ' '), '\\s+', ' ', 'g'))
-              AND
-              trim(regexp_replace(replace(subject, chr(160), ' '), '\\s+', ' ', 'g')) =
-              trim(regexp_replace(replace(%s,    chr(160), ' '), '\\s+', ' ', 'g'))
-              AND
-              trim(regexp_replace(replace(task_type, chr(160), ' '), '\\s+', ' ', 'g')) =
-              trim(regexp_replace(replace(%s,       chr(160), ' '), '\\s+', ' ', 'g'))
+            WHERE exam = %s
+              AND subject = %s
+              AND task_type = %s
             ORDER BY RANDOM()
             LIMIT 1
             """,
