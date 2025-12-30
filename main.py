@@ -276,6 +276,10 @@ def choose_source(task_type: str, difficulty: str | None) -> str:
 
 
 def get_question(exam, subject, difficulty, task_type, cur):
+    # 🔍 DEBUG: проверяем, видит ли psycopg2 таблицу вообще
+    cur.execute("SELECT COUNT(*) FROM public.local_questions")
+    print("[DBG public.local_questions total]", cur.fetchone())
+
     # 🔒 Для тестов difficulty не используется
     if task_type == "Тест":
         difficulty = None
