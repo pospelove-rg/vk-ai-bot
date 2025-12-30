@@ -798,7 +798,7 @@ async def vk_webhook(request: Request):
         q = get_question(
             exam,
             subject,
-            None if task_type == "Тест" else difficulty,
+            difficulty,
             task_type,
             cur
         )
