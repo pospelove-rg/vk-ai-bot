@@ -365,6 +365,16 @@ def normalize(text: str) -> str:
 def normalize_lower(text: str) -> str:
     return normalize(text).lower()
 
+import re
+
+def norm_db(s: str | None) -> str | None:
+    if s is None:
+        return None
+    s = s.strip()
+    s = s.replace("\u00A0", " ")
+    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 def is_command(text_lower: str) -> bool:
     # команды + уровни/типы тоже не "ответ"
@@ -552,7 +562,7 @@ async def vk_webhook(request: Request):
                 current_source = NULL
             WHERE vk_user_id = %s
         """,
-            (text_upper, user_id),
+            (norm_db(text_upper), user_id),
         )
         conn.commit()
         vk_send(user_id, "Выберите предмет:", get_subject_keyboard(text_upper))
@@ -580,7 +590,7 @@ async def vk_webhook(request: Request):
                 current_source = NULL
             WHERE vk_user_id = %s
         """,
-            (text, user_id),
+            (norm_db(text), user_id),
         )
         conn.commit()
 
@@ -611,7 +621,7 @@ async def vk_webhook(request: Request):
                 current_source = NULL
             WHERE vk_user_id = %s
         """,
-            (chosen, user_id),
+            (norm_db(chosen), user_id),
         )
 
         conn.commit()
@@ -645,7 +655,7 @@ async def vk_webhook(request: Request):
                     current_source = NULL
                 WHERE vk_user_id = %s
                 """,
-                (chosen, user_id),
+                (norm_db(chosen), user_id),
             )
             conn.commit()
 
@@ -670,7 +680,7 @@ async def vk_webhook(request: Request):
                 current_source = NULL
             WHERE vk_user_id = %s
             """,
-            (chosen, user_id),
+            (norm_db(chosen), user_id),
         )
         conn.commit()
 
@@ -754,7 +764,13 @@ async def vk_webhook(request: Request):
             return PlainTextResponse("ok")
 
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
-        q = get_question(exam, subject, difficulty, task_type, cur)
+        q = get_question(
+            norm_db(exam),
+            norm_db(subject),
+            norm_db(difficulty),
+            norm_db(task_type),
+            cur
+        )
 
         if not q:
             vk_send(
