@@ -300,11 +300,13 @@ def get_question(exam, subject, difficulty, task_type, cur):
             cur.execute(
                 """
                 SELECT id, question
-                FROM public.local_questions
+                FROM local_questions
                 WHERE
-                    btrim(exam) = btrim(%s)
-                AND btrim(subject) = btrim(%s)
-                AND btrim(task_type) = btrim(%s)
+                    trim(replace(exam, E'\u00A0', ' ')) = trim(%s)
+                AND
+                    trim(replace(subject, E'\u00A0', ' ')) = trim(%s)
+                AND
+                    trim(replace(task_type, E'\u00A0', ' ')) = trim(%s)
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
