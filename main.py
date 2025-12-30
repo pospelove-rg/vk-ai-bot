@@ -301,15 +301,9 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 """
                 SELECT id, question
                 FROM local_questions
-                WHERE
-                    regexp_replace(exam, '[^А-ЯA-Z0-9]', '', 'g')
-                        = regexp_replace(%s, '[^А-ЯA-Z0-9]', '', 'g')
-                AND
-                    regexp_replace(subject, '[^А-Яа-яA-Za-z0-9]', '', 'g')
-                        = regexp_replace(%s, '[^А-Яа-яA-Za-z0-9]', '', 'g')
-                AND
-                    regexp_replace(task_type, '[^А-Яа-яA-Za-z0-9]', '', 'g')
-                        = regexp_replace(%s, '[^А-Яа-яA-Za-z0-9]', '', 'g')
+                WHERE exam = %s
+                  AND subject = %s
+                  AND task_type = %s
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
@@ -357,9 +351,20 @@ def norm_db(s: str | None) -> str | None:
     if s is None:
         return None
     s = s.strip()
+
+    # ❗ Удаляем «умные» кавычки и апострофы
+    s = s.replace("’", "")
+    s = s.replace("‘", "")
+    s = s.replace("“", "")
+    s = s.replace("”", "")
+
+    # NBSP и zero-width
     s = s.replace("\u00A0", " ")
-    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)  # на всякий случай
+    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
+
+    # нормализация пробелов
     s = re.sub(r"\s+", " ", s)
+
     return s
 
 
