@@ -1,5 +1,6 @@
 # ================== MAIN ==================
-# VERSION: 2.2.6
+# VERSION: 2.2.7
+print("=== MAIN LOADED VERSION 2.2.7 ===")
 
 import os
 import json
@@ -283,6 +284,41 @@ def get_question(exam, subject, difficulty, task_type, cur):
     # 🔍 DEBUG: проверяем, видит ли psycopg2 таблицу вообще
     cur.execute("SELECT COUNT(*) FROM public.local_questions")
     print("[DBG public.local_questions total]", cur.fetchone())
+    
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM local_questions
+        WHERE exam=%s AND subject=%s AND task_type=%s
+        """,
+        (exam, subject, task_type),
+    )
+    print("[DBG exact match COUNT]", cur.fetchone())
+
+    cur.execute(
+        """
+        SELECT
+          exam, subject, task_type,
+          encode(convert_to(exam,'UTF8'),'hex') AS exam_hex,
+          encode(convert_to(subject,'UTF8'),'hex') AS subject_hex,
+          encode(convert_to(task_type,'UTF8'),'hex') AS task_hex
+        FROM local_questions
+        LIMIT 1
+        """
+    )
+    print("[DBG sample row]", cur.fetchone())
+
+cur.execute(
+    """
+    SELECT
+      encode(convert_to(%s,'UTF8'),'hex') AS p_exam_hex,
+      encode(convert_to(%s,'UTF8'),'hex') AS p_subject_hex,
+      encode(convert_to(%s,'UTF8'),'hex') AS p_task_hex
+    """,
+    (exam, subject, task_type),
+)
+print("[DBG params hex]", cur.fetchone())
+
 
     # 🔒 Для тестов difficulty не используется
     if task_type == "Тест":
@@ -302,12 +338,78 @@ def get_question(exam, subject, difficulty, task_type, cur):
             # DEBUG (оставлено для диагностики)
             print("[DBG get_question params] exam=", repr(exam), "subject=", repr(subject), "task_type=", repr(task_type))
             cur.execute(
-                """
+                r"""
                 SELECT id, question
                 FROM local_questions
-                WHERE exam = %s
-                  AND subject = %s
-                  AND task_type = %s
+                WHERE
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(exam,
+                      chr(160),' '),          -- NBSP
+                      chr(8203),''),          -- zero-width space
+                      chr(8204),''),          -- zero-width non-joiner
+                      chr(8205),''),          -- zero-width joiner
+                      chr(65279),''),         -- BOM
+                      chr(8217),''            -- ’
+                    ),
+                    '\s+', ' ', 'g'
+                  )) =
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(%s,
+                      chr(160),' '),
+                      chr(8203),''),
+                      chr(8204),''),
+                      chr(8205),''),
+                      chr(65279),''),
+                      chr(8217),''
+                    ),
+                    '\s+', ' ', 'g'
+                  ))
+                AND
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(subject,
+                      chr(160),' '),
+                      chr(8203),''),
+                      chr(8204),''),
+                      chr(8205),''),
+                      chr(65279),''),
+                      chr(8217),''
+                    ),
+                    '\s+', ' ', 'g'
+                  )) =
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(%s,
+                      chr(160),' '),
+                      chr(8203),''),
+                      chr(8204),''),
+                      chr(8205),''),
+                      chr(65279),''),
+                      chr(8217),''
+                    ),
+                    '\s+', ' ', 'g'
+                  ))
+                AND
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(task_type,
+                      chr(160),' '),
+                      chr(8203),''),
+                      chr(8204),''),
+                      chr(8205),''),
+                      chr(65279),''),
+                      chr(8217),''
+                    ),
+                    '\s+', ' ', 'g'
+                  )) =
+                  btrim(regexp_replace(
+                    replace(replace(replace(replace(replace(replace(%s,
+                      chr(160),' '),
+                      chr(8203),''),
+                      chr(8204),''),
+                      chr(8205),''),
+                      chr(65279),''),
+                      chr(8217),''
+                    ),
+                    '\s+', ' ', 'g'
+                  ))
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
