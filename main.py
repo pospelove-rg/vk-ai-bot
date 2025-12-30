@@ -315,17 +315,18 @@ def get_question(exam, subject, difficulty, task_type, cur):
         # 🔒 ТЕСТЫ — БЕЗ difficulty
         if task_type == "Тест":
             cur.execute(
-            """
-            SELECT id, question
-            FROM local_questions
-            WHERE exam = %s
-              AND subject = %s
-              AND task_type = %s
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (exam, subject, task_type),
-        )
+                """
+                SELECT id, question
+                FROM local_questions
+                WHERE
+                  trim(regexp_replace(exam, '[^[:print:]]', '', 'g')) = %s
+                  AND trim(regexp_replace(subject, '[^[:print:]]', '', 'g')) = %s
+                  AND trim(regexp_replace(task_type, '[^[:print:]]', '', 'g')) = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (exam, subject, task_type),
+            )
         else:
             cur.execute(
                 """
