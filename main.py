@@ -300,9 +300,9 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 SELECT id, question
                 FROM local_questions
                 WHERE
-                    trim(regexp_replace(exam, '\s+', ' ', 'g')) = trim(%s)
-                AND trim(regexp_replace(subject, '\s+', ' ', 'g')) = trim(%s)
-                AND trim(regexp_replace(task_type, '\s+', ' ', 'g')) = trim(%s)
+                    trim(regexp_replace(exam, '\\s+', ' ', 'g')) = trim(%s)
+                AND trim(regexp_replace(subject, '\\s+', ' ', 'g')) = trim(%s)
+                AND trim(regexp_replace(task_type, '\\s+', ' ', 'g')) = trim(%s)
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
@@ -453,6 +453,13 @@ async def vk_webhook(request: Request):
         attempts_count,
         correct_count,
     ) = row
+
+    # 🔧 НОРМАЛИЗУЕМ ТО, ЧТО ПРИШЛО ИЗ БД
+    exam = norm_db(exam)
+    subject = norm_db(subject)
+    difficulty = norm_db(difficulty)
+    task_type = norm_db(task_type)
+
 
     # ===== 1) ПРИВЕТ (всегда раньше всего, чтобы "привет" не считался ответом) =====
     if text_lower in ("привет", "hello", "hi"):
@@ -770,10 +777,10 @@ async def vk_webhook(request: Request):
 
         # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
         q = get_question(
-            norm_db(exam),
-            norm_db(subject),
-            None if task_type == "Тест" else norm_db(difficulty),
-            norm_db(task_type),
+            exam,
+            subject,
+            None if task_type == "Тест" else difficulty,
+            task_type,
             cur
         )
 
