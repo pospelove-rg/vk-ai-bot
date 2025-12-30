@@ -284,6 +284,10 @@ def choose_source(task_type: str, difficulty: str) -> str:
     return "ai"
 
 def get_question(exam, subject, difficulty, task_type, cur):
+    # 🔒 Для тестов difficulty не используется
+    if task_type == "Тест":
+        difficulty = None
+
     source = choose_source(task_type, difficulty)
 
     # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
@@ -768,7 +772,7 @@ async def vk_webhook(request: Request):
         q = get_question(
             norm_db(exam),
             norm_db(subject),
-            norm_db(difficulty),
+            None if task_type == "Тест" else norm_db(difficulty),
             norm_db(task_type),
             cur
         )
