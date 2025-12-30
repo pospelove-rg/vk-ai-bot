@@ -80,6 +80,8 @@ def get_connection():
     )
     # важно: кодировка на уровне сессии
     conn.set_client_encoding("UTF8")
+    with conn.cursor() as c:
+        c.execute("SET plan_cache_mode = force_custom_plan")
     return conn
 
 
@@ -290,56 +292,18 @@ def get_question(exam, subject, difficulty, task_type, cur):
         if task_type == "Тест":
             # DEBUG (оставлено для диагностики)
             print("[DBG get_question params] exam=", repr(exam), "subject=", repr(subject), "task_type=", repr(task_type))
-
-            cur.execute(
-                r"""
-                SELECT COUNT(*)
-                FROM local_questions
-                WHERE
-                    trim(regexp_replace(replace(exam, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,   chr(160), ' '), '\s+', ' ', 'g'))
-                AND
-                    trim(regexp_replace(replace(subject, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,     chr(160), ' '), '\s+', ' ', 'g'))
-                AND
-                    trim(regexp_replace(replace(task_type, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,       chr(160), ' '), '\s+', ' ', 'g'))
-                """,
-                (exam, subject, task_type),
-            )
-            print("[DBG local_questions COUNT]", cur.fetchone())
-
-            cur.execute(
-                r"""
-                SELECT id, question
-                FROM local_questions
-                WHERE
-                    trim(regexp_replace(replace(exam, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,   chr(160), ' '), '\s+', ' ', 'g'))
-                AND
-                    trim(regexp_replace(replace(subject, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,     chr(160), ' '), '\s+', ' ', 'g'))
-                AND
-                    trim(regexp_replace(replace(task_type, chr(160), ' '), '\s+', ' ', 'g')) =
-                    trim(regexp_replace(replace(%s,       chr(160), ' '), '\s+', ' ', 'g'))
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (exam, subject, task_type),
-            )
-        else:
             cur.execute(
                 """
                 SELECT id, question
                 FROM local_questions
-                WHERE exam = %s
-                  AND subject = %s
-                  AND difficulty = %s
-                  AND task_type = %s
+                WHERE
+                    btrim(exam) = btrim(%s)
+                AND btrim(subject) = btrim(%s)
+                AND btrim(task_type) = btrim(%s)
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
-                (exam, subject, difficulty, task_type),
+                (exam, subject, task_type),
             )
 
         row = cur.fetchone()
