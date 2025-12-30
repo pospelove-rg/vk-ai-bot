@@ -1,6 +1,10 @@
+# ================== MAIN ==================
+# VERSION: 2.2.6
+
 import os
 import json
 import random
+import re
 import psycopg2
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
@@ -66,7 +70,6 @@ MIN_LEN_BY_TYPE = {
 
 # ================== DB ==================
 
-
 def get_connection():
     conn = psycopg2.connect(
         host="dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com",
@@ -75,8 +78,10 @@ def get_connection():
         password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
         database="vk_ai_bot_db",
     )
+    # важно: кодировка на уровне сессии
     conn.set_client_encoding("UTF8")
     return conn
+
 
 def ensure_user_row(cur, user_id: int):
     cur.execute(
@@ -84,7 +89,7 @@ def ensure_user_row(cur, user_id: int):
         INSERT INTO user_progress (vk_user_id)
         VALUES (%s)
         ON CONFLICT (vk_user_id) DO NOTHING
-    """,
+        """,
         (user_id,),
     )
 
@@ -106,14 +111,12 @@ def get_user_row(cur, user_id: int):
             correct_count
         FROM user_progress
         WHERE vk_user_id=%s
-    """,
+        """,
         (user_id,),
     )
     return cur.fetchone()
 
-
 # ================== VK SEND ==================
-
 
 def vk_send(user_id: int, message: str, keyboard: dict | None = None):
     payload = {
@@ -129,9 +132,7 @@ def vk_send(user_id: int, message: str, keyboard: dict | None = None):
     requests.post("https://api.vk.com/method/messages.send", data=payload, timeout=15)
     print(f"[VK_SEND] to {user_id}: {message}")
 
-
 # ================== KEYBOARDS ==================
-
 
 def get_main_keyboard():
     return {
@@ -149,20 +150,11 @@ def get_game_keyboard():
         "buttons": [
             [
                 {"action": {"type": "text", "label": "Знайка"}, "color": "primary"},
-                {
-                    "action": {"type": "text", "label": "Сменить предмет"},
-                    "color": "secondary",
-                },
+                {"action": {"type": "text", "label": "Сменить предмет"}, "color": "secondary"},
             ],
             [
-                {
-                    "action": {"type": "text", "label": "Сменить экзамен"},
-                    "color": "secondary",
-                },
-                {
-                    "action": {"type": "text", "label": "Статистика"},
-                    "color": "secondary",
-                },
+                {"action": {"type": "text", "label": "Сменить экзамен"}, "color": "secondary"},
+                {"action": {"type": "text", "label": "Статистика"}, "color": "secondary"},
             ],
         ],
     }
@@ -217,9 +209,7 @@ def format_settings(exam, subject, difficulty, task_type):
         f"Тип задания: {task_type}"
     )
 
-
 # ================== OPENAI ==================
-
 
 def generate_question(exam: str, subject: str, difficulty: str, task_type: str) -> str:
     prompt = f"""
@@ -272,16 +262,15 @@ EXPLANATION: краткое объяснение (2–4 предложения)
     )
     return r.choices[0].message.content.strip()
 
-
 # ================== QUESTION SOURCE ==================
-def choose_source(task_type: str, difficulty: str) -> str:
+
+def choose_source(task_type: str, difficulty: str | None) -> str:
     if task_type == "Тест":
         return "local"
-
     if task_type == "Практика" and difficulty == "Базовый":
         return "local"
-
     return "ai"
+
 
 def get_question(exam, subject, difficulty, task_type, cur):
     # 🔒 Для тестов difficulty не используется
@@ -290,38 +279,49 @@ def get_question(exam, subject, difficulty, task_type, cur):
 
     source = choose_source(task_type, difficulty)
 
+    # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
     if source == "local":
-        if task_type == "Тест":
-            # DEBUG: покажем реальные байты
-            print("[DBG get_question params]",
-                  "exam=", repr(exam),
-                  "subject=", repr(subject),
-                  "task_type=", repr(task_type))
 
-            # DEBUG: проверим COUNT по тем же параметрам
+        # ✅ НОРМАЛИЗАЦИЯ НА СТОРОНЕ SQL:
+        # - заменяем NBSP (chr(160)) на обычный пробел
+        # - сжимаем пробелы/переводы строк \s+ -> ' '
+        # - trim
+        # Важно: делаем одинаково для колонки и для параметра
+        if task_type == "Тест":
+            # DEBUG (оставлено для диагностики)
+            print("[DBG get_question params] exam=", repr(exam), "subject=", repr(subject), "task_type=", repr(task_type))
+
             cur.execute(
-                """
+                r"""
                 SELECT COUNT(*)
                 FROM local_questions
-                WHERE exam = %s AND subject = %s AND task_type = %s
+                WHERE
+                    trim(regexp_replace(replace(exam, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,   chr(160), ' '), '\s+', ' ', 'g'))
+                AND
+                    trim(regexp_replace(replace(subject, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,     chr(160), ' '), '\s+', ' ', 'g'))
+                AND
+                    trim(regexp_replace(replace(task_type, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,       chr(160), ' '), '\s+', ' ', 'g'))
                 """,
                 (exam, subject, task_type),
             )
             print("[DBG local_questions COUNT]", cur.fetchone())
 
-    # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
-    if source == "local":
-
-        # 🔒 ТЕСТЫ — БЕЗ difficulty
-        if task_type == "Тест":
             cur.execute(
-                """
+                r"""
                 SELECT id, question
                 FROM local_questions
                 WHERE
-                  trim(regexp_replace(exam, '[^[:print:]]', '', 'g')) = %s
-                  AND trim(regexp_replace(subject, '[^[:print:]]', '', 'g')) = %s
-                  AND trim(regexp_replace(task_type, '[^[:print:]]', '', 'g')) = %s
+                    trim(regexp_replace(replace(exam, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,   chr(160), ' '), '\s+', ' ', 'g'))
+                AND
+                    trim(regexp_replace(replace(subject, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,     chr(160), ' '), '\s+', ' ', 'g'))
+                AND
+                    trim(regexp_replace(replace(task_type, chr(160), ' '), '\s+', ' ', 'g')) =
+                    trim(regexp_replace(replace(%s,       chr(160), ' '), '\s+', ' ', 'g'))
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
@@ -344,11 +344,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
 
         row = cur.fetchone()
         if row:
-            return {
-                "id": row[0],
-                "text": row[1],
-                "source": "local",
-            }
+            return {"id": row[0], "text": row[1], "source": "local"}
 
         # ❌ ДЛЯ ТЕСТОВ FALLBACK ЗАПРЕЩЁН
         if task_type == "Тест":
@@ -370,17 +366,9 @@ def get_question(exam, subject, difficulty, task_type, cur):
 
     qid = cur.fetchone()[0]
 
-    return {
-        "id": qid,
-        "text": text,
-        "source": "ai",
-    }
-
-
-
+    return {"id": qid, "text": text, "source": "ai"}
 
 # ================== HELPERS ==================
-
 
 def normalize(text: str) -> str:
     return (text or "").strip()
@@ -389,19 +377,18 @@ def normalize(text: str) -> str:
 def normalize_lower(text: str) -> str:
     return normalize(text).lower()
 
-import re
 
 def norm_db(s: str | None) -> str | None:
     if s is None:
         return None
     s = s.strip()
     s = s.replace("\u00A0", " ")
-    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
+    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)  # на всякий случай
     s = re.sub(r"\s+", " ", s)
     return s
 
+
 def is_command(text_lower: str) -> bool:
-    # команды + уровни/типы тоже не "ответ"
     if text_lower in BASE_COMMANDS:
         return True
     if text_lower in {d.lower() for d in DIFFICULTIES}:
@@ -412,9 +399,7 @@ def is_command(text_lower: str) -> bool:
         return True
     return False
 
-
 # ================== WEBHOOK ==================
-
 
 @app.post("/webhook")
 async def vk_webhook(request: Request):
@@ -445,20 +430,15 @@ async def vk_webhook(request: Request):
 
     row = get_user_row(cur, user_id)
     if not row:
-        # экстренно создаём строку ещё раз и перечитываем
         ensure_user_row(cur, user_id)
         conn.commit()
         row = get_user_row(cur, user_id)
 
     if not row:
-        vk_send(
-            user_id,
-            "Произошла внутренняя ошибка. Нажмите «Начать».",
-            get_main_keyboard()
-        )
+        vk_send(user_id, "Произошла внутренняя ошибка. Нажмите «Начать».", get_main_keyboard())
         conn.close()
         return PlainTextResponse("ok")
-    # row: (exam, subject, difficulty, task_type, question, waiting_for_answer, solved_count)
+
     (
         exam,
         subject,
@@ -473,14 +453,13 @@ async def vk_webhook(request: Request):
         correct_count,
     ) = row
 
-    # 🔧 НОРМАЛИЗУЕМ ТО, ЧТО ПРИШЛО ИЗ БД
+    # Нормализуем то, что пришло из БД
     exam = norm_db(exam)
     subject = norm_db(subject)
     difficulty = norm_db(difficulty)
     task_type = norm_db(task_type)
 
-
-    # ===== 1) ПРИВЕТ (всегда раньше всего, чтобы "привет" не считался ответом) =====
+    # ===== 1) ПРИВЕТ =====
     if text_lower in ("привет", "hello", "hi"):
         vk_send(
             user_id,
@@ -500,12 +479,12 @@ async def vk_webhook(request: Request):
     if text_lower == "статистика":
         cur.execute(
             """
-            SELECT 
+            SELECT
                 COALESCE(attempts_count, 0),
                 COALESCE(correct_count, 0)
             FROM user_progress
             WHERE vk_user_id = %s
-        """,
+            """,
             (user_id,),
         )
 
@@ -541,7 +520,7 @@ async def vk_webhook(request: Request):
                 current_question_id = NULL,
                 current_source = NULL
             WHERE vk_user_id = %s
-        """,
+            """,
             (user_id,),
         )
         conn.commit()
@@ -568,7 +547,7 @@ async def vk_webhook(request: Request):
                 current_question_id = NULL,
                 current_source = NULL
             WHERE vk_user_id = %s
-        """,
+            """,
             (user_id,),
         )
 
@@ -592,7 +571,7 @@ async def vk_webhook(request: Request):
                 current_question_id = NULL,
                 current_source = NULL
             WHERE vk_user_id = %s
-        """,
+            """,
             (norm_db(text_upper), user_id),
         )
         conn.commit()
@@ -600,9 +579,8 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== 6) ВЫБОР ПРЕДМЕТА (только если экзамен выбран, а предмет ещё нет) =====
+    # ===== 6) ВЫБОР ПРЕДМЕТА =====
     if exam and not subject:
-        # валидируем, что это реально предмет из списка
         if text not in SUBJECTS.get(exam, []):
             vk_send(user_id, "Выберите предмет кнопками:", get_subject_keyboard(exam))
             conn.close()
@@ -620,7 +598,7 @@ async def vk_webhook(request: Request):
                 current_question_id = NULL,
                 current_source = NULL
             WHERE vk_user_id = %s
-        """,
+            """,
             (norm_db(text), user_id),
         )
         conn.commit()
@@ -638,7 +616,6 @@ async def vk_webhook(request: Request):
         and not difficulty
         and text_lower in {d.lower() for d in DIFFICULTIES}
     ):
-        # сохраняем каноническое значение (с заглавной)
         chosen = next(d for d in DIFFICULTIES if d.lower() == text_lower)
 
         cur.execute(
@@ -651,7 +628,7 @@ async def vk_webhook(request: Request):
                 current_question_id = NULL,
                 current_source = NULL
             WHERE vk_user_id = %s
-        """,
+            """,
             (norm_db(chosen), user_id),
         )
 
@@ -662,6 +639,8 @@ async def vk_webhook(request: Request):
             "Настройки сохранены. Нажмите «Знайка», чтобы получить вопрос.",
             get_game_keyboard(),
         )
+        conn.close()
+        return PlainTextResponse("ok")
 
     # ===== 8) ВЫБОР ТИПА ЗАДАНИЯ =====
     if (
@@ -672,7 +651,6 @@ async def vk_webhook(request: Request):
     ):
         chosen = next(t for t in TASK_TYPES if t.lower() == text_lower)
 
-        # ✅ Если выбрали "Тест" — сложность не нужна
         if chosen == "Тест":
             cur.execute(
                 """
@@ -698,7 +676,6 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        # ✅ Для остальных типов — просим сложность
         cur.execute(
             """
             UPDATE user_progress
@@ -719,34 +696,28 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
-
     # ===== 9) НАЧАТЬ =====
     if text_lower == "начать":
-        # если ждём ответ — НЕ генерируем новый вопрос
         if waiting and question:
             vk_send(user_id, "Сначала ответьте на текущий вопрос.", get_game_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
-        # 1. Экзамен
         if not exam:
             vk_send(user_id, "Выберите экзамен:", get_exam_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
-        # 2. Предмет
         if not subject:
             vk_send(user_id, "Выберите предмет:", get_subject_keyboard(exam))
             conn.close()
             return PlainTextResponse("ok")
 
-        # 3. Тип задания
         if not task_type:
             vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
-        # 4. Сложность — ТОЛЬКО если не тест
         if task_type != "Тест" and not difficulty:
             vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
             conn.close()
@@ -767,7 +738,7 @@ async def vk_webhook(request: Request):
         conn.close()
         return PlainTextResponse("ok")
 
-    # ===== 9.1) ЗНАЙКА — СРАЗУ ВОПРОС =====
+    # ===== 9.1) ЗНАЙКА =====
     if text_lower == "знайка":
         if waiting and question:
             vk_send(user_id, "Сначала ответьте на текущий вопрос.", get_game_keyboard())
@@ -784,24 +755,17 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        if task_type != "Тест" and not difficulty:
-            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
-            conn.close()
-            return PlainTextResponse("ok")
-
         if not task_type:
             vk_send(user_id, "Выберите тип задания:", get_task_type_keyboard())
             conn.close()
             return PlainTextResponse("ok")
 
-        # ⚡ СРАЗУ генерируем вопрос (без экрана настроек)
-        q = get_question(
-            exam,
-            subject,
-            difficulty,
-            task_type,
-            cur
-        )
+        if task_type != "Тест" and not difficulty:
+            vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
+            conn.close()
+            return PlainTextResponse("ok")
+
+        q = get_question(exam, subject, difficulty, task_type, cur)
 
         if not q:
             vk_send(
@@ -822,7 +786,7 @@ async def vk_webhook(request: Request):
                 current_question_id=%s,
                 current_source=%s
             WHERE vk_user_id=%s
-        """,
+            """,
             (q["text"], q["id"], q["source"], user_id),
         )
         conn.commit()
@@ -832,7 +796,6 @@ async def vk_webhook(request: Request):
         return PlainTextResponse("ok")
 
     # ===== 10) ОТВЕТ НА ВОПРОС =====
-    # Ответ принимаем ТОЛЬКО если реально ждём ответ и это не команда
     if waiting and question and (not is_command(text_lower)):
 
         # ===== 10.0 ТЕСТ: ТОЛЬКО A–D =====
@@ -848,7 +811,6 @@ async def vk_webhook(request: Request):
                 conn.close()
                 return PlainTextResponse("ok")
 
-            # получаем правильный вариант из local_questions
             cur.execute(
                 """
                 SELECT correct_option
@@ -871,7 +833,6 @@ async def vk_webhook(request: Request):
             correct_option = row[0]
             is_correct = answer == correct_option
 
-            # обновляем статистику
             cur.execute(
                 """
                 UPDATE user_progress
@@ -892,9 +853,8 @@ async def vk_webhook(request: Request):
                 get_game_keyboard(),
             )
 
-            # ===== 10.0.1 АВТОПЕРЕХОД К СЛЕДУЮЩЕМУ ВОПРОСУ =====
+            # Автоследующий вопрос
             q = get_question(exam, subject, difficulty, task_type, cur)
-
             if q:
                 cur.execute(
                     """
@@ -910,18 +870,12 @@ async def vk_webhook(request: Request):
                 )
                 conn.commit()
 
-                vk_send(
-                    user_id,
-                    f"🧠 Следующий вопрос:\n{q['text']}",
-                    get_game_keyboard(),
-                )
+                vk_send(user_id, f"🧠 Следующий вопрос:\n{q['text']}", get_game_keyboard())
 
             conn.close()
             return PlainTextResponse("ok")
 
         # ===== 10.1 НЕ ТЕСТ (AI-ПРОВЕРКА) =====
-
-        # 10.1.1 Минимальная длина
         min_len = MIN_LEN_BY_TYPE.get(task_type)
         if min_len and len(text.strip()) < min_len:
             vk_send(
@@ -932,7 +886,6 @@ async def vk_webhook(request: Request):
             conn.close()
             return PlainTextResponse("ok")
 
-        # 10.1.2 AI-проверка
         result_text = check_answer(question, text, task_type)
         is_correct = "RESULT: CORRECT" in result_text
 
@@ -952,15 +905,12 @@ async def vk_webhook(request: Request):
 
         vk_send(
             user_id,
-            result_text
-            .replace("RESULT: CORRECT", "✅ Верно")
-            .replace("RESULT: WRONG", "❌ Неверно"),
+            result_text.replace("RESULT: CORRECT", "✅ Верно").replace("RESULT: WRONG", "❌ Неверно"),
             get_game_keyboard(),
         )
 
         conn.close()
         return PlainTextResponse("ok")
-
 
     # ===== 11) ПО УМОЛЧАНИЮ =====
     if waiting and question:
@@ -978,8 +928,7 @@ async def vk_webhook(request: Request):
     elif task_type != "Тест" and not difficulty:
         vk_send(user_id, "Выберите уровень сложности:", get_difficulty_keyboard())
     else:
-        vk_send(
-            user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard()
-        )
+        vk_send(user_id, "Нажмите «Знайка», чтобы получить вопрос.", get_game_keyboard())
+
     conn.close()
     return PlainTextResponse("ok")
