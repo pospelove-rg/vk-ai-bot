@@ -75,13 +75,14 @@ def get_connection():
         host="dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com",
         port="5432",
         user="vk_ai_bot_db_user",
-        password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
+        password="***",
         database="vk_ai_bot_db",
     )
-    # важно: кодировка на уровне сессии
     conn.set_client_encoding("UTF8")
-    with conn.cursor() as c:
-        c.execute("SET plan_cache_mode = force_custom_plan")
+
+    with conn.cursor() as cur:
+        cur.execute("SET search_path TO public")
+
     return conn
 
 
@@ -295,7 +296,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
             cur.execute(
                 """
                 SELECT id, question
-                FROM local_questions
+                FROM public.local_questions
                 WHERE
                     btrim(exam) = btrim(%s)
                 AND btrim(subject) = btrim(%s)
@@ -385,8 +386,12 @@ async def vk_webhook(request: Request):
 
     conn = get_connection()
     cur = conn.cursor()
+
     cur.execute("SHOW client_encoding")
     print("[ENCODING]", cur.fetchone())
+
+    cur.execute("SHOW search_path")
+    print("[DBG search_path]", cur.fetchone())
 
     # гарантируем строку пользователя
     ensure_user_row(cur, user_id)
