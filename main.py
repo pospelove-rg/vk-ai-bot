@@ -302,16 +302,20 @@ def get_question(exam, subject, difficulty, task_type, cur):
                 SELECT id, question
                 FROM local_questions
                 WHERE
-                    trim(replace(exam, E'\u00A0', ' ')) = trim(%s)
+                    regexp_replace(exam, '[^А-ЯA-Z0-9]', '', 'g')
+                        = regexp_replace(%s, '[^А-ЯA-Z0-9]', '', 'g')
                 AND
-                    trim(replace(subject, E'\u00A0', ' ')) = trim(%s)
+                    regexp_replace(subject, '[^А-Яа-яA-Za-z0-9]', '', 'g')
+                        = regexp_replace(%s, '[^А-Яа-яA-Za-z0-9]', '', 'g')
                 AND
-                    trim(replace(task_type, E'\u00A0', ' ')) = trim(%s)
+                    regexp_replace(task_type, '[^А-Яа-яA-Za-z0-9]', '', 'g')
+                        = regexp_replace(%s, '[^А-Яа-яA-Za-z0-9]', '', 'g')
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
                 (exam, subject, task_type),
             )
+
 
         row = cur.fetchone()
         if row:
