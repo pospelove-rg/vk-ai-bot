@@ -75,7 +75,7 @@ def get_connection():
         host="dpg-d4v7f7npm1nc73bi9640-a.frankfurt-postgres.render.com",
         port="5432",
         user="vk_ai_bot_db_user",
-        password="***",
+        password="2nejvbVyY5yxTHLOGQCh3K7ylPyi5pwC",
         database="vk_ai_bot_db",
     )
     conn.set_client_encoding("UTF8")
