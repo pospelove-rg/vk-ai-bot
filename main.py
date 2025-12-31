@@ -1,6 +1,6 @@
 # ================== MAIN ==================
-# VERSION: 2.2.7
-print("=== MAIN LOADED VERSION 2.2.7 ===")
+# VERSION: 2.2.8
+print("=== MAIN LOADED VERSION 2.2.8 ===")
 
 import os
 import json
@@ -68,6 +68,57 @@ MIN_LEN_BY_TYPE = {
     "Практика": 40,
     "Развёрнутый ответ": 80,
 }
+
+# ================== HELPERS ==================
+
+def normalize(text: str) -> str:
+    return (text or "").strip()
+
+
+def normalize_lower(text: str) -> str:
+    return normalize(text).lower()
+
+
+def norm_db(s: str | None) -> str | None:
+    if s is None:
+        return None
+    s = s.strip()
+
+    # ❗ Удаляем «умные» кавычки и апострофы
+    s = s.replace("’", "")
+    s = s.replace("‘", "")
+    s = s.replace("“", "")
+    s = s.replace("”", "")
+
+    # NBSP и zero-width
+    s = s.replace("\u00A0", " ")
+    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
+
+    # нормализация пробелов
+    s = re.sub(r"\s+", " ", s)
+
+    return s
+
+
+def is_command(text_lower: str) -> bool:
+    if text_lower in BASE_COMMANDS:
+        return True
+    if text_lower in {d.lower() for d in DIFFICULTIES}:
+        return True
+    if text_lower in {t.lower() for t in TASK_TYPES}:
+        return True
+    if text_lower in {"огэ", "егэ"}:
+        return True
+    return False
+
+
+def vk_format_text(s: str) -> str:
+    """
+    VK ожидает реальные переводы строк.
+    Если в БД хранится '\n' как текст, превращаем в настоящий newline.
+    """
+    return (s or "").replace("\\n", "\n")
+
 
 # ================== DB ==================
 
@@ -276,7 +327,7 @@ def choose_source(task_type: str, difficulty: str | None) -> str:
     return "ai"
 
 
-def get_question(exam, subject, difficulty, task_type, cur):
+def get_question(exam, subject, difficulty, task_type, cur, exclude_id=None):
     exam = norm_db(exam)
     subject = norm_db(subject)
     task_type = norm_db(task_type)
@@ -284,7 +335,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
     # 🔍 DEBUG: проверяем, видит ли psycopg2 таблицу вообще
     cur.execute("SELECT COUNT(*) FROM public.local_questions")
     print("[DBG public.local_questions total]", cur.fetchone())
-    
+
     cur.execute(
         """
         SELECT COUNT(*)
@@ -295,6 +346,7 @@ def get_question(exam, subject, difficulty, task_type, cur):
     )
     print("[DBG exact match COUNT]", cur.fetchone())
 
+    # (оставляем диагностику — она полезна, но не ломает логику)
     cur.execute(
         """
         SELECT
@@ -319,7 +371,6 @@ def get_question(exam, subject, difficulty, task_type, cur):
     )
     print("[DBG params hex]", cur.fetchone())
 
-
     # 🔒 Для тестов difficulty не используется
     if task_type == "Тест":
         difficulty = None
@@ -329,14 +380,17 @@ def get_question(exam, subject, difficulty, task_type, cur):
     # 1️⃣ ЛОКАЛЬНЫЙ ВОПРОС
     if source == "local":
 
-        # ✅ НОРМАЛИЗАЦИЯ НА СТОРОНЕ SQL:
-        # - заменяем NBSP (chr(160)) на обычный пробел
-        # - сжимаем пробелы/переводы строк \s+ -> ' '
-        # - trim
-        # Важно: делаем одинаково для колонки и для параметра
         if task_type == "Тест":
-            # DEBUG (оставлено для диагностики)
-            print("[DBG get_question params] exam=", repr(exam), "subject=", repr(subject), "task_type=", repr(task_type))
+            print(
+                "[DBG get_question params] exam=", repr(exam),
+                "subject=", repr(subject),
+                "task_type=", repr(task_type),
+                "exclude_id=", repr(exclude_id),
+            )
+
+            # ВАЖНО:
+            # - здесь добавлено исключение текущего вопроса (exclude_id),
+            #   чтобы не повторять один и тот же тест при малом наборе данных
             cur.execute(
                 r"""
                 SELECT id, question
@@ -410,12 +464,12 @@ def get_question(exam, subject, difficulty, task_type, cur):
                     ),
                     '\s+', ' ', 'g'
                   ))
+                AND (%s IS NULL OR id <> %s)
                 ORDER BY RANDOM()
                 LIMIT 1
                 """,
-                (exam, subject, task_type),
+                (exam, subject, task_type, exclude_id, exclude_id),
             )
-
 
         row = cur.fetchone()
         if row:
@@ -442,48 +496,6 @@ def get_question(exam, subject, difficulty, task_type, cur):
     qid = cur.fetchone()[0]
 
     return {"id": qid, "text": text, "source": "ai"}
-
-# ================== HELPERS ==================
-
-def normalize(text: str) -> str:
-    return (text or "").strip()
-
-
-def normalize_lower(text: str) -> str:
-    return normalize(text).lower()
-
-
-def norm_db(s: str | None) -> str | None:
-    if s is None:
-        return None
-    s = s.strip()
-
-    # ❗ Удаляем «умные» кавычки и апострофы
-    s = s.replace("’", "")
-    s = s.replace("‘", "")
-    s = s.replace("“", "")
-    s = s.replace("”", "")
-
-    # NBSP и zero-width
-    s = s.replace("\u00A0", " ")
-    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
-
-    # нормализация пробелов
-    s = re.sub(r"\s+", " ", s)
-
-    return s
-
-
-def is_command(text_lower: str) -> bool:
-    if text_lower in BASE_COMMANDS:
-        return True
-    if text_lower in {d.lower() for d in DIFFICULTIES}:
-        return True
-    if text_lower in {t.lower() for t in TASK_TYPES}:
-        return True
-    if text_lower in {"огэ", "егэ"}:
-        return True
-    return False
 
 # ================== WEBHOOK ==================
 
@@ -881,7 +893,8 @@ async def vk_webhook(request: Request):
         )
         conn.commit()
 
-        vk_send(user_id, f"🧠 Вопрос от «Знайки»:\n{q['text']}", get_game_keyboard())
+        qtext = vk_format_text(q["text"])
+        vk_send(user_id, f"🧠 Вопрос от «Знайки»:\n{qtext}", get_game_keyboard())
         conn.close()
         return PlainTextResponse("ok")
 
@@ -920,7 +933,7 @@ async def vk_webhook(request: Request):
                 conn.close()
                 return PlainTextResponse("ok")
 
-            correct_option = row[0]
+            correct_option = (row[0] or "").strip().upper()
             is_correct = answer == correct_option
 
             cur.execute(
@@ -929,8 +942,8 @@ async def vk_webhook(request: Request):
                 SET
                     waiting_for_answer = false,
                     question = NULL,
-                    attempts_count = attempts_count + 1,
-                    correct_count = correct_count + %s
+                    attempts_count = COALESCE(attempts_count, 0) + 1,
+                    correct_count = COALESCE(correct_count, 0) + %s
                 WHERE vk_user_id = %s
                 """,
                 (1 if is_correct else 0, user_id),
@@ -943,8 +956,8 @@ async def vk_webhook(request: Request):
                 get_game_keyboard(),
             )
 
-            # Автоследующий вопрос
-            q = get_question(exam, subject, difficulty, task_type, cur)
+            # Автоследующий вопрос (исключаем только что отвеченный вопрос)
+            q = get_question(exam, subject, difficulty, task_type, cur, exclude_id=current_qid)
             if q:
                 cur.execute(
                     """
@@ -960,7 +973,8 @@ async def vk_webhook(request: Request):
                 )
                 conn.commit()
 
-                vk_send(user_id, f"🧠 Следующий вопрос:\n{q['text']}", get_game_keyboard())
+                qtext = vk_format_text(q["text"])
+                vk_send(user_id, f"🧠 Следующий вопрос:\n{qtext}", get_game_keyboard())
 
             conn.close()
             return PlainTextResponse("ok")
@@ -985,8 +999,8 @@ async def vk_webhook(request: Request):
             SET
                 waiting_for_answer = false,
                 question = NULL,
-                attempts_count = attempts_count + 1,
-                correct_count = correct_count + %s
+                attempts_count = COALESCE(attempts_count, 0) + 1,
+                correct_count = COALESCE(correct_count, 0) + %s
             WHERE vk_user_id = %s
             """,
             (1 if is_correct else 0, user_id),
